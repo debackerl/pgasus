@@ -482,6 +482,7 @@ func (h *RequestHandler) makeBatchRouteHandler(route *route) denco.HandlerFunc {
 		switch route.Method {
 		case "post":
 			for _, query := range queries {
+				func () { // lambda function to define when deferred function needs to be closed
 					sql := NewSqlBuilder()
 					
 					if err := buildInsertSqlQuery(sql, h.FtsFunctionName, route.ParametersTypes, route.ObjectName, filter, query); err != nil {
@@ -585,6 +586,7 @@ func (h *RequestHandler) makeProcedureRouteHandler(route *route) denco.HandlerFu
 		}
 		
 		for _, query := range queries {
+			func () { // lambda function to define when deferred function needs to be closed
 				for k, v := range globalQuery {
 					query[k] = v
 				}
