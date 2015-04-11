@@ -482,21 +482,22 @@ func (h *RequestHandler) makeBatchRouteHandler(route *route) denco.HandlerFunc {
 		switch route.Method {
 		case "post":
 			for _, query := range queries {
-				sql := NewSqlBuilder()
-				
-				if err := buildInsertSqlQuery(sql, h.FtsFunctionName, route.ParametersTypes, route.ObjectName, filter, query); err != nil {
-					panic(err)
-				}
-				
-				rows, err := tx.Query(sql.Sql(), sql.Values()...)
-				if err != nil {
-					panic(err)
-				}
-				defer rows.Close()
-				
-				if err := readRecords(responder, false, rows); err != nil {
-					panic(err)
-				}
+					sql := NewSqlBuilder()
+					
+					if err := buildInsertSqlQuery(sql, h.FtsFunctionName, route.ParametersTypes, route.ObjectName, filter, query); err != nil {
+						panic(err)
+					}
+					
+					rows, err := tx.Query(sql.Sql(), sql.Values()...)
+					if err != nil {
+						panic(err)
+					}
+					defer rows.Close()
+					
+					if err := readRecords(responder, false, rows); err != nil {
+						panic(err)
+					}
+				}()
 			}
 		case "put":
 			if batch {
@@ -584,39 +585,40 @@ func (h *RequestHandler) makeProcedureRouteHandler(route *route) denco.HandlerFu
 		}
 		
 		for _, query := range queries {
-			for k, v := range globalQuery {
-				query[k] = v
-			}
-			
-			sql := NewSqlBuilder()
-			// if returned type is a composite type, then we also from a SELECT * FROM
-			if err := buildProcedureSqlQuery(sql, route.ObjectName, route.Proretset || route.Prorettyptype == "c", query); err != nil {
-				panic(err)
-			}
-			
-			rows, err := tx.Query(sql.Sql(), sql.Values()...)
-			if err != nil {
-				panic(err)
-			}
-			defer rows.Close()
-			
-			if rows.Err() != nil {
-				panic(rows.Err())
-			} else {
-				if route.Proretset {
-					if err := readRecords(responder, false, rows); err != nil {
-						panic(err)
-					}
-				} else if route.Prorettyptype == "c" { // composite type as return
-					if err := readRecords(responder, true, rows); err != nil {
-						panic(err)
-					}
+				for k, v := range globalQuery {
+					query[k] = v
+				}
+				
+				sql := NewSqlBuilder()
+				// if returned type is a composite type, then we also send a SELECT * FROM
+				if err := buildProcedureSqlQuery(sql, route.ObjectName, route.Proretset || route.Prorettyptype == "c", query); err != nil {
+					panic(err)
+				}
+				
+				rows, err := tx.Query(sql.Sql(), sql.Values()...)
+				if err != nil {
+					panic(err)
+				}
+				defer rows.Close()
+				
+				if rows.Err() != nil {
+					panic(rows.Err())
 				} else {
-					if err := readScalar(responder, rows); err != nil {
-						panic(err)
+					if route.Proretset {
+						if err := readRecords(responder, false, rows); err != nil {
+							panic(err)
+						}
+					} else if route.Prorettyptype == "c" { // composite type as return
+						if err := readRecords(responder, true, rows); err != nil {
+							panic(err)
+						}
+					} else {
+						if err := readScalar(responder, rows); err != nil {
+							panic(err)
+						}
 					}
 				}
-			}
+			}()
 		}
 		
 		if batch {
