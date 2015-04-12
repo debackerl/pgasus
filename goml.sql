@@ -66,9 +66,11 @@ CREATE TABLE routes (
     ttl integer DEFAULT 0 NOT NULL,
     is_public boolean NOT NULL,
     hidden_fields text[] DEFAULT ARRAY[]::text[] NOT NULL,
+    readonly_fields text[] DEFAULT ARRAY[]::text[] NOT NULL,
     constants jsonb DEFAULT 'null'::jsonb NOT NULL,
     context_mapped_headers public.hstore DEFAULT ''::public.hstore NOT NULL,
-    context_mapped_variables text[] DEFAULT ARRAY[]::text[] NOT NULL
+    context_mapped_variables text[] DEFAULT ARRAY[]::text[] NOT NULL,
+    max_limit integer NOT NULL DEFAULT 0
 );
 
 
