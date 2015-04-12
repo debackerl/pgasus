@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func decodeHttpBody(w http.ResponseWriter, r *http.Request, argumentsType map[string]string, maxBodySizeKbytes int64) (queries []map[string]interface{}, batch bool, err error) {
+func decodeHttpBody(w http.ResponseWriter, r *http.Request, argumentsType map[string]string, readonlyFields map[string]struct{}, maxBodySizeKbytes int64) (queries []map[string]interface{}, batch bool, err error) {
 	//r.Header.Get("Content-Type")
 	
 	queries = make([]map[string]interface{}, 0, 1)
@@ -26,7 +26,7 @@ func decodeHttpBody(w http.ResponseWriter, r *http.Request, argumentsType map[st
 		for _, subValue := range array {
 			if object, ok := subValue.Object(); ok == nil {
 				var query map[string]interface{}
-				query, err = prepareArgumentsFromObject(object, argumentsType)
+				query, err = prepareArgumentsFromObject(object, argumentsType, readonlyFields)
 				if err != nil {
 					queries = nil
 					return
@@ -40,7 +40,7 @@ func decodeHttpBody(w http.ResponseWriter, r *http.Request, argumentsType map[st
 		batch = true
 	} else if object, ok := value.Object(); ok == nil {
 		var query map[string]interface{}
-		query, err = prepareArgumentsFromObject(object, argumentsType)
+		query, err = prepareArgumentsFromObject(object, argumentsType, readonlyFields)
 		if err != nil {
 			queries = nil
 			return
@@ -55,10 +55,16 @@ func decodeHttpBody(w http.ResponseWriter, r *http.Request, argumentsType map[st
 	return
 }
 
-func prepareArgumentsFromObject(arguments *jason.Object, argumentsType map[string]string) (query map[string]interface{}, err error) {
+func prepareArgumentsFromObject(arguments *jason.Object, argumentsType map[string]string, readonlyFields map[string]struct{}) (query map[string]interface{}, err error) {
 	query = make(map[string]interface{})
 	
 	for key, value := range arguments.Map() {
+		if readonlyFields != nil {
+			if _, ok := readonlyFields[key]; ok {
+				continue
+			}
+		}
+		
 		if typ, ok := argumentsType[key]; ok {
 			var arg interface{}
 			

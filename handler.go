@@ -35,12 +35,14 @@ type route struct {
 	ObjectType string
 	TTL int
 	IsPublic bool
-	HiddenFields map[string]struct{}
 	ContextHeaders pgx.NullHstore
 	ContextVariables []string
 	ParametersTypes map[string]string
 	RawConstants []byte
 	Constants map[string]interface{}
+	MaxLimit int64 // select on relations only
+	HiddenFields map[string]struct{}
+	ReadOnlyFields map[string]struct{} // insert and update on relations only
 	Proretset bool // procedures only, true if it returns a set, false otherwise
 	Provolatile string // procedures only, "i" for immutable, "s" for stable, "v" for volatile
 	Prorettyptype string // procedures only
@@ -92,42 +94,12 @@ func (h *RequestHandler) Load() error {
 	if err != nil {
 		return err
 	}
-	conn, _ := h.db.Acquire()
-	test(conn)
 	
 	if err := h.createHandlers(); err != nil {
 		return err
 	}
 	
 	return nil
-}
-
-func test(conn *pgx.Conn) {
-	var val []string
-
-	err := conn.QueryRow("select array[]::text[]").Scan(&val)
-	if err != nil {
-		fmt.Println(`error reading array: %v`, err)
-	}
-	if len(val) != 0 {
-		fmt.Println("Expected 0 values, got %d", len(val))
-	}
-
-	var n, m int32
-
-	err = conn.QueryRow("select 1::integer, array[]::text[], 42::integer").Scan(&n, &val, &m)
-	if err != nil {
-		fmt.Println(`error reading array: %v`, err)
-	}
-	if len(val) != 0 {
-		fmt.Println("Expected 0 values, got %d", len(val))
-	}
-	if n != 1 {
-		fmt.Println("Expected n to be 1, but it was %d", n)
-	}
-	if m != 42 {
-		fmt.Println("Expected n to be 42, but it was %d", n)
-	}
 }
 
 func lastIndexRune(s string, r rune) int {
@@ -239,7 +211,7 @@ func (h *RequestHandler) createHandlers() error {
 		}
 		r.RawConstants = nil
 		
-		r.Constants, err = prepareArgumentsFromObject(jsonConstants, r.ParametersTypes)
+		r.Constants, err = prepareArgumentsFromObject(jsonConstants, r.ParametersTypes, nil)
 		if err != nil {
 			return err
 		}
@@ -283,7 +255,7 @@ func (h *RequestHandler) createHandlers() error {
 }
 
 func loadRoutes(tx *pgx.Tx, routesTableName string) ([]*route, error) {
-	rows, err := tx.Query(`SELECT method,url_path,object_name,object_type,ttl,is_public,hidden_fields,context_mapped_headers,context_mapped_variables,constants FROM ` + quoteIdentifier(routesTableName))
+	rows, err := tx.Query(`SELECT method,url_path,object_name,object_type,ttl,is_public,hidden_fields,readonly_fields,context_mapped_headers,context_mapped_variables,constants,max_limit FROM ` + quoteIdentifier(routesTableName))
 	if err != nil {
 		return nil, err
 	}
@@ -294,16 +266,24 @@ func loadRoutes(tx *pgx.Tx, routesTableName string) ([]*route, error) {
 		r := new(route)
 		
 		var ttl int32
+		var maxLimit int32
 		var hiddenFields []string
-		if err := rows.Scan(&r.Method, &r.UrlPath, &r.ObjectName, &r.ObjectType, &ttl, &r.IsPublic, &hiddenFields, &r.ContextHeaders, &r.ContextVariables, &r.RawConstants); err != nil {
+		var readonlyFields []string
+		if err := rows.Scan(&r.Method, &r.UrlPath, &r.ObjectName, &r.ObjectType, &ttl, &r.IsPublic, &hiddenFields, &readonlyFields, &r.ContextHeaders, &r.ContextVariables, &r.RawConstants, &maxLimit); err != nil {
 			return nil, err
 		}
 		
 		r.TTL = int(ttl)
+		r.MaxLimit = int64(maxLimit)
 		
 		r.HiddenFields = make(map[string]struct{})
 		for _, hiddenField := range hiddenFields {
 			r.HiddenFields[hiddenField] = struct{}{}
+		}
+		
+		r.ReadOnlyFields = make(map[string]struct{})
+		for _, readonlyField := range readonlyFields {
+			r.ReadOnlyFields[readonlyField] = struct{}{}
 		}
 		
 		routes = append(routes, r)
@@ -378,7 +358,7 @@ func (h *RequestHandler) makeNonBatchRouteHandler(route *route) denco.HandlerFun
 		globalQuery := initGlobalQuery(route)
 		paramsDecoder(globalQuery, params, route.ParametersTypes)
 		
-		filter, order, limit, err := parseQueryString(r, globalQuery, h.FilterQueryName, h.SortQueryName, h.LimitQueryName)
+		filter, order, limit, err := parseQueryString(r, globalQuery, h.FilterQueryName, h.SortQueryName, h.LimitQueryName, route.MaxLimit)
 		if err != nil {
 			panic(err)
 		}
@@ -448,12 +428,12 @@ func (h *RequestHandler) makeBatchRouteHandler(route *route) denco.HandlerFunc {
 		globalQuery := initGlobalQuery(route)
 		paramsDecoder(globalQuery, params, route.ParametersTypes)
 		
-		queries, batch, err := decodeHttpBody(w, r, route.ParametersTypes, h.MaxBodySizeKbytes)
+		queries, batch, err := decodeHttpBody(w, r, route.ParametersTypes, route.ReadOnlyFields, h.MaxBodySizeKbytes)
 		if err != nil {
 			panic(err)
 		}
 		
-		filter, _, _, err := parseQueryString(r, globalQuery, h.FilterQueryName, h.SortQueryName, h.LimitQueryName)
+		filter, _, _, err := parseQueryString(r, globalQuery, h.FilterQueryName, h.SortQueryName, h.LimitQueryName, route.MaxLimit)
 		if err != nil {
 			panic(err)
 		}
@@ -558,7 +538,7 @@ func (h *RequestHandler) makeProcedureRouteHandler(route *route) denco.HandlerFu
 			queries = append(queries, query)
 		} else {
 			var err error
-			queries, batch, err = decodeHttpBody(w, r, route.ParametersTypes, h.MaxBodySizeKbytes)
+			queries, batch, err = decodeHttpBody(w, r, route.ParametersTypes, nil, h.MaxBodySizeKbytes)
 			if err != nil {
 				panic(err)
 			}
@@ -712,7 +692,7 @@ func getClientCn(r *http.Request, defaultCn string) string {
 	return defaultCn
 }
 
-func parseQueryString(r *http.Request, globalQuery map[string]interface{}, filterQueryName string, sortQueryName string, limitQueryName string) (queryme.Predicate, []*queryme.SortOrder, int64, error) {
+func parseQueryString(r *http.Request, globalQuery map[string]interface{}, filterQueryName string, sortQueryName string, limitQueryName string, maxLimit int64) (queryme.Predicate, []*queryme.SortOrder, int64, error) {
 	queryString := queryme.NewFromRawQuery(r.URL.RawQuery)
 	
 	conjunctionTerms := make([]queryme.Predicate, 0, 8)
@@ -748,13 +728,17 @@ func parseQueryString(r *http.Request, globalQuery map[string]interface{}, filte
 	}
 	
 	limit := int64(-1)
-	/*if raw, ok := queryString.Raw(limitQueryName); ok {
+	if raw, ok := queryString.Raw(limitQueryName); ok {
 		var err error
 		limit, err = strconv.ParseInt(raw, 10, 64)
 		if err != nil {
 			return nil, nil, -1, err
 		}
-	}*/
+	}
+	
+	if maxLimit > 0 && (maxLimit < limit || limit <= 0) {
+		limit = maxLimit
+	}
 	
 	return filter, order, limit, nil
 }
