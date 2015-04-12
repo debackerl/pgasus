@@ -773,8 +773,28 @@ func makeContext(r *http.Request, contextHeaders pgx.NullHstore, params denco.Pa
 		}
 	}
 	
+	var cookies map[string]*http.Cookie
+	
 	for _, name := range contextVariables {
-		context[name] = params.Get(name)
+		v := params.Get(name)
+		
+		if v == "" {
+			if cookies == nil {
+				now := time.Now()
+				cookies = make(map[string]*http.Cookie)
+				for _, c := range r.Cookies() {
+					if c.MaxAge >= 0 && (c.RawExpires == "" || c.Expires.After(now)) {
+						cookies[c.Name] = c
+					}
+				}
+			}
+			
+			if c, ok := cookies[name]; ok {
+				v = c.Value
+			}
+		}
+		
+		context[name] = v
 	}
 	
 	return context
