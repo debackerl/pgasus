@@ -384,7 +384,7 @@ func (h *RequestHandler) makeNonBatchRouteHandler(route *route) denco.HandlerFun
 		
 		switch route.Method {
 		case "get":
-			if err := buildSelectSqlQuery(sql, h.FtsFunctionName, route.ParametersTypes, route.Columns, route.ObjectName, filter, order, limit); err != nil {
+			if err := buildSelectSqlQuery(&sql, h.FtsFunctionName, route.ParametersTypes, route.Columns, route.ObjectName, filter, order, limit); err != nil {
 				panic(err)
 			}
 			
@@ -398,7 +398,7 @@ func (h *RequestHandler) makeNonBatchRouteHandler(route *route) denco.HandlerFun
 				panic(err)
 			}
 		case "delete":
-			if err := buildDeleteSqlQuery(sql, h.FtsFunctionName, route.ParametersTypes, route.ObjectName, filter); err != nil {
+			if err := buildDeleteSqlQuery(&sql, h.FtsFunctionName, route.ParametersTypes, route.ObjectName, filter); err != nil {
 				panic(err)
 			}
 			
@@ -462,23 +462,7 @@ func (h *RequestHandler) makeBatchRouteHandler(route *route) denco.HandlerFunc {
 		switch route.Method {
 		case "post":
 			for _, query := range queries {
-				func () { // lambda function to define when deferred function needs to be closed
-					sql := NewSqlBuilder()
-					
-					if err := buildInsertSqlQuery(sql, h.FtsFunctionName, route.ParametersTypes, route.ObjectName, filter, query); err != nil {
-						panic(err)
-					}
-					
-					rows, err := tx.Query(sql.Sql(), sql.Values()...)
-					if err != nil {
-						panic(err)
-					}
-					defer rows.Close()
-					
-					if err := readRecords(responder, false, rows); err != nil {
-						panic(err)
-					}
-				}()
+				processBatchPost(h, route, tx, responder, query, filter)
 			}
 		case "put":
 			if batch {
@@ -488,7 +472,7 @@ func (h *RequestHandler) makeBatchRouteHandler(route *route) denco.HandlerFunc {
 				
 				sql := NewSqlBuilder()
 				
-				if err := buildUpdateSqlQuery(sql, h.FtsFunctionName, route.ParametersTypes, route.ObjectName, filter, query); err != nil {
+				if err := buildUpdateSqlQuery(&sql, h.FtsFunctionName, route.ParametersTypes, route.ObjectName, filter, query); err != nil {
 					panic(err)
 				}
 				
@@ -515,6 +499,24 @@ func (h *RequestHandler) makeBatchRouteHandler(route *route) denco.HandlerFunc {
 		
 		setCacheControl(w, route.TTL, route.IsPublic)
 		responder.HttpRespond(w)
+	}
+}
+
+func processBatchPost(h *RequestHandler, route *route, tx *pgx.Tx, responder RecordSetHttpResponder, query map[string]interface{}, filter queryme.Predicate) {
+	sql := NewSqlBuilder()
+	
+	if err := buildInsertSqlQuery(&sql, h.FtsFunctionName, route.ParametersTypes, route.ObjectName, filter, query); err != nil {
+		panic(err)
+	}
+	
+	rows, err := tx.Query(sql.Sql(), sql.Values()...)
+	if err != nil {
+		panic(err)
+	}
+	defer rows.Close()
+	
+	if err := readRecords(responder, false, rows); err != nil {
+		panic(err)
 	}
 }
 
@@ -566,41 +568,11 @@ func (h *RequestHandler) makeProcedureRouteHandler(route *route) denco.HandlerFu
 		}
 		
 		for _, query := range queries {
-			func () { // lambda function to define when deferred function needs to be closed
-				for k, v := range globalQuery {
-					query[k] = v
-				}
-				
-				sql := NewSqlBuilder()
-				// if returned type is a composite type, then we also send a SELECT * FROM
-				if err := buildProcedureSqlQuery(sql, route.ObjectName, route.Proretset || route.Prorettyptype == "c", query); err != nil {
-					panic(err)
-				}
-				
-				rows, err := tx.Query(sql.Sql(), sql.Values()...)
-				if err != nil {
-					panic(err)
-				}
-				defer rows.Close()
-				
-				if rows.Err() != nil {
-					panic(rows.Err())
-				} else {
-					if route.Proretset {
-						if err := readRecords(responder, false, rows); err != nil {
-							panic(err)
-						}
-					} else if route.Prorettyptype == "c" { // composite type as return
-						if err := readRecords(responder, true, rows); err != nil {
-							panic(err)
-						}
-					} else {
-						if err := readScalar(responder, rows); err != nil {
-							panic(err)
-						}
-					}
-				}
-			}()
+			for k, v := range globalQuery {
+				query[k] = v
+			}
+			
+			processProcedureQuery(route, tx, responder, query)
 		}
 		
 		if batch {
@@ -613,6 +585,38 @@ func (h *RequestHandler) makeProcedureRouteHandler(route *route) denco.HandlerFu
 		
 		setCacheControl(w, route.TTL, route.IsPublic)
 		responder.HttpRespond(w)
+	}
+}
+
+func processProcedureQuery(route *route, tx *pgx.Tx, responder RecordSetHttpResponder, query map[string]interface{}) {
+	sql := NewSqlBuilder()
+	// if returned type is a composite type, then we also send a SELECT * FROM
+	if err := buildProcedureSqlQuery(&sql, route.ObjectName, route.Proretset || route.Prorettyptype == "c", query); err != nil {
+		panic(err)
+	}
+	
+	rows, err := tx.Query(sql.Sql(), sql.Values()...)
+	if err != nil {
+		panic(err)
+	}
+	defer rows.Close()
+	
+	if rows.Err() != nil {
+		panic(rows.Err())
+	} else {
+		if route.Proretset {
+			if err := readRecords(responder, false, rows); err != nil {
+				panic(err)
+			}
+		} else if route.Prorettyptype == "c" { // composite type as return
+			if err := readRecords(responder, true, rows); err != nil {
+				panic(err)
+			}
+		} else {
+			if err := readScalar(responder, rows); err != nil {
+				panic(err)
+			}
+		}
 	}
 }
 

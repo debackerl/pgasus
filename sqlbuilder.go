@@ -11,8 +11,8 @@ type SqlBuilder struct {
 	values []interface{}
 }
 
-func NewSqlBuilder() *SqlBuilder {
-	return &SqlBuilder {
+func NewSqlBuilder() SqlBuilder {
+	return SqlBuilder {
 		values: make([]interface{}, 0, 4),
 	}
 }

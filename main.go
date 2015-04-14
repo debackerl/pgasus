@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"io/ioutil"
+	"runtime"
 	"time"
 )
 
@@ -19,6 +20,10 @@ var (
 )
 
 var config struct {
+	System struct {
+		Maxprocs int
+	}
+
 	Http struct {
 		Address string
 		MaxOpenConnections int
@@ -85,6 +90,8 @@ func main() {
 	// however original port is still in use.
 	
 	loadConfig(*configPathArg)
+	
+	runtime.GOMAXPROCS(config.System.Maxprocs)
 	
 	var handler RequestHandler
 	handler.Socket = config.Postgres.Socket
