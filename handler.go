@@ -50,6 +50,7 @@ type route struct {
 }
 
 type RequestHandler struct {
+	Verbose bool
 	Socket string
 	Database string
 	SearchPath string
@@ -72,6 +73,9 @@ type RequestHandler struct {
 
 func (h *RequestHandler) OpenRequestsLogFile(path string) error {
 	var err error
+	if path == "-" {
+		path = "/dev/stdout"
+	}
 	h.reqLogFile, err = os.OpenFile(path, os.O_WRONLY | os.O_APPEND | os.O_CREATE, 0666)
 	return err
 }
@@ -132,7 +136,7 @@ func (h *RequestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	
 	if sepIdx == -1 || sepIdx == len(path) - 1 {
 		w.WriteHeader(422)
-		w.Write([]byte("Extension in path expected."))
+		w.Write([]byte("Extension in path expected in URL."))
 	} else {
 		ext := path[sepIdx+1:]
 		r.URL.Path = path[0:sepIdx]
@@ -216,7 +220,9 @@ func (h *RequestHandler) createHandlers() error {
 			return err
 		}
 		
-		log.Printf("Loading route, method: %s, url: %s, target: %s type: %s", r.Method, r.UrlPath, r.ObjectName, r.ObjectType)
+		if h.Verbose {
+			log.Printf("Loading route, method: %s, url: %s, target: %s type: %s", r.Method, r.UrlPath, r.ObjectName, r.ObjectType)
+		}
 		
 		var routeHandler denco.HandlerFunc = nil
 		

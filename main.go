@@ -22,6 +22,7 @@ var (
 var config struct {
 	System struct {
 		Maxprocs int
+		Verbose bool
 	}
 
 	Http struct {
@@ -94,6 +95,7 @@ func main() {
 	runtime.GOMAXPROCS(config.System.Maxprocs)
 	
 	var handler RequestHandler
+	handler.Verbose = config.System.Verbose
 	handler.Socket = config.Postgres.Socket
 	handler.Database = config.Postgres.Database
 	handler.SearchPath = config.Postgres.SearchPath
@@ -147,7 +149,9 @@ func main() {
 		},
 	}
 	
-	log.Println("Goml started.")
+	if config.System.Verbose {
+		log.Println("Goml started.")
+	}
 	
 	if config.Http.Key != "" && config.Http.Cert != "" {
 		if err := svr.ListenAndServeTLS(config.Http.Cert, config.Http.Key); err != nil {
