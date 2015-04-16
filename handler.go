@@ -18,8 +18,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
+	"unsafe"
 )
 
 type RecordSetHttpResponder interface {
@@ -50,9 +52,13 @@ type route struct {
 }
 
 type RequestHandler struct {
+	handler unsafe.Pointer // placed first to be 64-bit aligned
+	stop int32
+	
 	Verbose bool
 	Socket string
 	Database string
+	UpdatesChannelName string
 	SearchPath string
 	MaxOpenConnections int
 	ContextParameterName string
@@ -67,7 +73,6 @@ type RequestHandler struct {
 	LimitQueryName string
 	
 	db *pgx.ConnPool
-	handler http.Handler
 	reqLogFile *os.File
 }
 
@@ -98,6 +103,8 @@ func (h *RequestHandler) Load() error {
 	if err != nil {
 		return err
 	}
+	
+	h.listen()
 	
 	if err := h.createHandlers(); err != nil {
 		return err
@@ -153,28 +160,47 @@ func (h *RequestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		
-		h.handler.ServeHTTP(w, r)
+		(*(*http.Handler)(atomic.LoadPointer(&h.handler))).ServeHTTP(w, r)
 	}
 }
 
-/*func (h *RequestHandler) listen() {
-	var channelName = ""
-	
-	for {
-		conn, err := h.db.Acquire()
-		
-		err = conn.Listen(channelName)
-		
-		notification, err := conn.WaitForNotification(time.Minute)
-		
-		if err == nil {
+func (h *RequestHandler) StopReloads() {
+	atomic.StoreInt32(&h.stop, 1)
+}
+
+func (h *RequestHandler) listen() {
+	go func() {
+		for atomic.LoadInt32(&h.stop) == 0 {
+			conn, err := h.db.Acquire()
+			if err != nil {
+				log.Fatalln(err)
+			}
 			
-		} else if err != pgx.ErrNotificationTimeout {
-			conn.Close()
-			h.db.Release(conn)
+			if err := conn.Listen(quoteIdentifier(h.UpdatesChannelName)); err != nil {
+				log.Println(err)
+				conn.Close()
+				h.db.Release(conn)
+			} else {
+				for {
+					notification, err := conn.WaitForNotification(time.Second)
+					if err != nil && err != pgx.ErrNotificationTimeout {
+						log.Println(err)
+						conn.Close()
+						h.db.Release(conn)
+						break
+					}
+					
+					if notification != nil && notification.Channel == h.UpdatesChannelName {
+						log.Println("Routes reload requested.")
+						if err := h.createHandlers(); err != nil {
+							log.Fatalln(err)
+						}
+					}
+				}
+			}
 		}
-	}
-}*/
+	}()
+}
 
 func (h *RequestHandler) createHandlers() error {
 	mux := denco.NewMux()
@@ -255,7 +281,7 @@ func (h *RequestHandler) createHandlers() error {
 		handler = gorilla.LoggingHandler(h.reqLogFile, handler)
 	}
 	
-	h.handler = handler
+	atomic.StorePointer(&h.handler, unsafe.Pointer(&handler))
 	
 	return nil
 }

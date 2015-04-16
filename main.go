@@ -45,6 +45,7 @@ var config struct {
 	Postgres struct {
 		Socket string
 		Database string
+		UpdatesChannelName string
 		SearchPath string
 		MaxOpenConnections int
 		ContextParameterName string
@@ -87,9 +88,6 @@ func loadConfig(path string) {
 func main() {
 	kingpin.MustParse(appCmdLine.Parse(os.Args[1:]))
 	
-	// On SIGHUP, parent process reforks, and config is reloaded,
-	// however original port is still in use.
-	
 	loadConfig(*configPathArg)
 	
 	runtime.GOMAXPROCS(config.System.Maxprocs)
@@ -98,6 +96,7 @@ func main() {
 	handler.Verbose = config.System.Verbose
 	handler.Socket = config.Postgres.Socket
 	handler.Database = config.Postgres.Database
+	handler.UpdatesChannelName = config.Postgres.UpdatesChannelName
 	handler.SearchPath = config.Postgres.SearchPath
 	handler.MaxOpenConnections = config.Postgres.MaxOpenConnections
 	handler.ContextParameterName = config.Postgres.ContextParameterName
@@ -136,7 +135,12 @@ func main() {
 	svr := 	&graceful.Server {
 		Timeout: time.Duration(config.Http.ShutdownTimeoutSecs) * time.Second,
 		ListenLimit: config.Http.MaxOpenConnections,
-		ShutdownInitiated: func() { log.Println("Goml shutdown requested.") },
+		ShutdownInitiated: func() {
+			if config.System.Verbose {
+				log.Println("Goml shutdown requested.")
+			}
+			handler.StopReloads()
+		},
 		Server: &http.Server {
 			Addr:           config.Http.Address,
 			Handler:        &handler,
