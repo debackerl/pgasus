@@ -17,13 +17,13 @@ import (
 
 type JsonRecordSetWriter struct {
 	bytes.Buffer
-	MaxResponseSizeKbytes int64
+	MaxResponseSizeBytes int64
 	stack []StateFunction
 }
 
 func NewJsonRecordSetWriter(maxResponseSizeKbytes int64) *JsonRecordSetWriter {
 	return &JsonRecordSetWriter {
-		MaxResponseSizeKbytes: maxResponseSizeKbytes,
+		MaxResponseSizeBytes: maxResponseSizeKbytes << 10,
 		stack: make([]StateFunction, 0, 4),
 	}
 }
@@ -260,7 +260,7 @@ func (w *JsonRecordSetWriter) Json(rs *RecordSet, v json.RawMessage) error {
 }
 
 func (w *JsonRecordSetWriter) checkSize() error {
-	if int64(w.Len()) > w.MaxResponseSizeKbytes {
+	if int64(w.Len()) > w.MaxResponseSizeBytes {
 		return errors.New("Response too long.")
 	}
 	return nil

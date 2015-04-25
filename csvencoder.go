@@ -14,7 +14,7 @@ import (
 
 type CsvRecordSetWriter struct {
 	bytes.Buffer
-	MaxResponseSizeKbytes int64
+	MaxResponseSizeBytes int64
 	first bool
 	depth int
 }
@@ -204,7 +204,7 @@ func (w *CsvRecordSetWriter) Json(rs *RecordSet, v json.RawMessage) error {
 }
 
 func (w *CsvRecordSetWriter) checkSize() error {
-	if int64(w.Len()) > w.MaxResponseSizeKbytes {
+	if int64(w.Len()) > w.MaxResponseSizeBytes {
 		return errors.New("Response too long.")
 	}
 	return nil

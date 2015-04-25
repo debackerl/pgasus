@@ -104,7 +104,9 @@ func (h *RequestHandler) Load() error {
 		return err
 	}
 	
-	h.listen()
+	if h.UpdatesChannelName != "" {
+		h.listen()
+	}
 	
 	if err := h.createHandlers(); err != nil {
 		return err
@@ -715,7 +717,7 @@ func getResponder(r *http.Request, maxResponseSizeKbytes int64) (RecordSetHttpRe
 	case "json":
 		return NewJsonRecordSetWriter(maxResponseSizeKbytes), nil
 	case "csv":
-		return &CsvRecordSetWriter{MaxResponseSizeKbytes: maxResponseSizeKbytes}, nil
+		return &CsvRecordSetWriter{MaxResponseSizeBytes: maxResponseSizeKbytes << 10}, nil
 	default:
 		return nil, errors.New("Requested format unsupported.")
 	}
