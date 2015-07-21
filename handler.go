@@ -64,6 +64,7 @@ type RequestHandler struct {
 	ContextParameterName string
 	RoutesTableName string
 	FtsFunctionName string
+	StatementTimeoutSecs int
 	DefaultCn string
 	UpdateForwardedForHeader bool
 	MaxBodySizeKbytes int64
@@ -410,7 +411,7 @@ func (h *RequestHandler) makeNonBatchRouteHandler(route *route) denco.HandlerFun
 		
 		clientCn := getClientCn(r, h.DefaultCn)
 		context := makeContext(r, route.ContextHeaders, params, route.ContextVariables)
-		if err := setTxContext(tx, clientCn, h.ContextParameterName, context); err != nil {
+		if err := setTxContext(tx, h.StatementTimeoutSecs, clientCn, h.ContextParameterName, context); err != nil {
 			panic(err)
 		}
 		
@@ -421,7 +422,7 @@ func (h *RequestHandler) makeNonBatchRouteHandler(route *route) denco.HandlerFun
 			if err := buildSelectSqlQuery(&sql, h.FtsFunctionName, route.ParametersTypes, route.Columns, route.ObjectName, filter, order, limit); err != nil {
 				panic(err)
 			}
-			
+
 			rows, err := tx.Query(sql.Sql(), sql.Values()...)
 			if err != nil {
 				panic(err)
@@ -485,7 +486,7 @@ func (h *RequestHandler) makeBatchRouteHandler(route *route) denco.HandlerFunc {
 		
 		clientCn := getClientCn(r, h.DefaultCn)
 		context := makeContext(r, route.ContextHeaders, params, route.ContextVariables)
-		if err := setTxContext(tx, clientCn, h.ContextParameterName, context); err != nil {
+		if err := setTxContext(tx, h.StatementTimeoutSecs, clientCn, h.ContextParameterName, context); err != nil {
 			panic(err)
 		}
 		
@@ -593,7 +594,7 @@ func (h *RequestHandler) makeProcedureRouteHandler(route *route) denco.HandlerFu
 		
 		clientCn := getClientCn(r, h.DefaultCn)
 		context := makeContext(r, route.ContextHeaders, params, route.ContextVariables)
-		if err := setTxContext(tx, clientCn, h.ContextParameterName, context); err != nil {
+		if err := setTxContext(tx, h.StatementTimeoutSecs, clientCn, h.ContextParameterName, context); err != nil {
 			panic(err)
 		}
 		
@@ -838,8 +839,12 @@ func makeContext(r *http.Request, contextHeaders pgx.NullHstore, params denco.Pa
 	return context
 }
 
-func setTxContext(tx *pgx.Tx, role string, sessionParameter string, context map[string]string) error {
+func setTxContext(tx *pgx.Tx, statementTimeout int, role string, sessionParameter string, context map[string]string) error {
 	builder := NewSqlBuilder()
+	
+	if _, err := tx.Exec("SET statement_timeout = " + strconv.Itoa(statementTimeout * 1000)); err != nil {
+		return err
+	}
 	
 	builder.WriteSql("SET LOCAL ROLE ")
 	if role == "" {

@@ -52,6 +52,10 @@ func (s *predicateSqlizer) AppendId(id string) {
 func (s *predicateSqlizer) AppendValue(field string, value interface{}) {
 	if typ, ok := s.ArgumentsType[field]; ok {
 		switch typ {
+		case "smallint", "integer", "bigint":
+			if f, ok := value.(float64); ok {
+				value = int64(f)
+			}
 		case "numeric", "money":
 			if f, ok := value.(float64); ok {
 				value = strconv.FormatFloat(f, 'g', -1, 64)

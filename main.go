@@ -51,6 +51,7 @@ var config struct {
 		ContextParameterName string
 		RoutesTableName string
 		FtsFunctionName string
+		StatementTimeoutSecs int
 	}
 	
 	Protocol struct {
@@ -102,6 +103,7 @@ func main() {
 	handler.ContextParameterName = config.Postgres.ContextParameterName
 	handler.RoutesTableName = config.Postgres.RoutesTableName
 	handler.FtsFunctionName = config.Postgres.FtsFunctionName
+	handler.StatementTimeoutSecs = config.Postgres.StatementTimeoutSecs
 	handler.DefaultCn = config.Http.DefaultClientCn
 	handler.UpdateForwardedForHeader = config.Http.UpdateForwardedForHeader
 	handler.MaxBodySizeKbytes = config.Http.MaxBodySizeKbytes
