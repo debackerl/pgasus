@@ -6,7 +6,7 @@ import (
 )
 
 type catchingHandler struct {
-	http.Handler
+	next http.Handler
 }
 
 func CatchingHandler(h http.Handler) http.Handler {
@@ -27,5 +27,5 @@ func (h catchingHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}()
 	
-	h.ServeHTTP(w, req)
+	h.next.ServeHTTP(w, req)
 }
