@@ -128,19 +128,6 @@ func lastIndexRune(s string, r rune) int {
 }
 
 func (h *RequestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Println("Error while processing request:", r)
-			
-			w.WriteHeader(http.StatusInternalServerError)
-			
-			if err, ok := r.(error); ok {
-				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-				w.Write([]byte(err.Error()))
-			}
-		}
-	}()
-	
 	path := r.URL.Path
 	sepIdx := lastIndexRune(path, '.')
 	
@@ -281,7 +268,7 @@ func (h *RequestHandler) createHandlers() error {
 	}
 	
 	if h.reqLogFile != nil {
-		handler = gorilla.LoggingHandler(h.reqLogFile, handler)
+		handler = gorilla.LoggingHandler(h.reqLogFile, CatchingHandler(handler))
 	}
 	
 	atomic.StorePointer(&h.handler, unsafe.Pointer(&handler))
