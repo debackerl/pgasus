@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx"
 	//"github.com/kr/pretty"
 	"encoding/base64"
+	"bytes"
 	"errors"
 	"fmt"
 	"log"
@@ -72,6 +73,7 @@ type RequestHandler struct {
 	FilterQueryName string
 	SortQueryName string
 	LimitQueryName string
+	Static []StaticRoute
 	
 	db *pgx.ConnPool
 	reqLogFile *os.File
@@ -217,6 +219,7 @@ func (h *RequestHandler) createHandlers() error {
 	}
 	
 	handlers := make([]denco.Handler, 0, len(routes))
+	
 	for _, r := range routes {
 		loadParametersTypes(tx, r)
 		
@@ -260,6 +263,11 @@ func (h *RequestHandler) createHandlers() error {
 		}
 		
 		handlers = append(handlers, mux.Handler(strings.ToUpper(r.Method), r.UrlPath, routeHandler))
+	}
+	
+	for _, r := range h.Static {
+		routeHandler := h.makeStaticFilesRouteHandler(&r)
+		handlers = append(handlers, mux.Handler("GET", r.Route + "/*filepath", routeHandler))
 	}
 	
 	handler, err := mux.Build(handlers)
@@ -639,6 +647,28 @@ func processProcedureQuery(route *route, tx *pgx.Tx, responder RecordSetHttpResp
 				panic(err)
 			}
 		}
+	}
+}
+
+func (h *RequestHandler) makeStaticFilesRouteHandler(route *StaticRoute) denco.HandlerFunc {
+	handler := http.FileServer(http.Dir(route.Path))
+	
+	return func (w http.ResponseWriter, r *http.Request, params denco.Params) {
+		// any request for a file which name ends with period '.' will not be satisfied
+		
+		ext := r.Header.Get("X-Accept")
+		
+		var newUrl bytes.Buffer
+		newUrl.WriteRune('/')
+		newUrl.WriteString(params.Get("filepath"))
+		if ext != "" {
+			newUrl.WriteRune('.')
+			newUrl.WriteString(ext)
+		}
+		
+		r.URL.Path = newUrl.String()
+		setCacheControl(w, route.TtlSecs, route.IsPublic)
+		handler.ServeHTTP(w, r)
 	}
 }
 
