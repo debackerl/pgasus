@@ -275,8 +275,10 @@ func (h *RequestHandler) createHandlers() error {
 		return err
 	}
 	
+	handler = CatchingHandler(handler)
+	
 	if h.reqLogFile != nil {
-		handler = gorilla.LoggingHandler(h.reqLogFile, CatchingHandler(handler))
+		handler = gorilla.LoggingHandler(h.reqLogFile, handler)
 	}
 	
 	atomic.StorePointer(&h.handler, unsafe.Pointer(&handler))

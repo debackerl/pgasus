@@ -52,11 +52,11 @@ func (s *predicateSqlizer) AppendId(id string) {
 func (s *predicateSqlizer) AppendValue(field string, value interface{}) {
 	if typ, ok := s.ArgumentsType[field]; ok {
 		switch typ {
-		case "smallint", "integer", "bigint":
+		case "smallint", "integer", "bigint", "smallint[]", "integer[]", "bigint[]":
 			if f, ok := value.(float64); ok {
 				value = int64(f)
 			}
-		case "numeric", "money":
+		case "numeric", "money", "numeric[]", "money[]":
 			if f, ok := value.(float64); ok {
 				value = strconv.FormatFloat(f, 'g', -1, 64)
 			}
@@ -105,23 +105,31 @@ func (s *predicateSqlizer) VisitEq(field queryme.Field, operands []queryme.Value
 		s.AppendSql("false")
 	case 1:
 		s.AppendId(f)
-		if s.isFieldArray(f) {
-			s.AppendSql("@>")
+		isArray := s.isFieldArray(f)
+		if isArray {
+			s.AppendSql("@>ARRAY[")
 		} else {
 			s.AppendSql("=")
 		}
 		s.AppendValue(f, operands[0])
+		if isArray {
+			s.AppendSql("]::")
+			typ, _ := s.ArgumentsType[f]
+			s.AppendSql(typ)
+		}
 	default:
 		s.AppendId(f)
 		if s.isFieldArray(f) {
-			s.AppendSql(" @@ ARRAY[")
+			s.AppendSql("&&ARRAY[")
 			for i, op := range operands {
 				if i > 0 {
 					s.AppendSql(",")
 				}
 				s.AppendValue(f, op)
 			}
-			s.AppendSql("]")
+			s.AppendSql("]::")
+			typ, _ := s.ArgumentsType[f]
+			s.AppendSql(typ)
 		} else {
 			s.AppendSql(" IN (")
 			for i, op := range operands {

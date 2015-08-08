@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"github.com/debackerl/queryme/go"
 )
 
