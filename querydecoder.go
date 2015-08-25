@@ -166,7 +166,7 @@ func valueFallback(value *jason.Value) (res string, err error) {
 	if ok != nil {
 		var raw []byte
 		raw, err = value.Marshal()
-		if err != nil {
+		if err == nil {
 			res = string(raw)
 		}
 	}
