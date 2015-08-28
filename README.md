@@ -21,7 +21,7 @@ Design rules:
 
 A table stored in the database stores all routes made available by pgasus. The reason to store this in the database is to be able to synchronize deployment of new tables and functions, while updating routes in a single transaction. Here are the fields:
 * HTTP method, get, post, put, delete
-* URL, like /enterprises/:entref/pos, containing variables
+* URL, like /enterprises/:entref/pos, containing variables. See [denco](https://github.com/naoina/denco) for format.
 * Object name, name of relation or procedure
 * Object type, relation, procedure
 * TTL, used for cache-control in HTTP response
@@ -165,11 +165,15 @@ It may also be wise to update your $PATH to include *"~/gocode/bin/"*.
 
 You are now ready to download pgasus:
 
-`go get github.com/debackerl/pgasus`
+```
+go get github.com/debackerl/pgasus
+```
 
 and install it:
 
-`go install github.com/debackerl/pgasus`
+```
+go install github.com/debackerl/pgasus
+```
 
 You can now type *pgasus* to start the program.
 
@@ -177,6 +181,8 @@ You can now type *pgasus* to start the program.
 
 The program must be started with the path to its configuration path like this:
 
-`pgasus --config pgasus.conf`
+```
+pgasus --config pgasus.conf
+```
 
 Please have a look at the sample pgasus.conf file which is written in [TOML](https://github.com/toml-lang/toml) format.
