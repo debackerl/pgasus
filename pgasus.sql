@@ -15,17 +15,17 @@ SET client_min_messages = warning;
 
 --
 -- TOC entry 7 (class 2615 OID 16395)
--- Name: goml; Type: SCHEMA; Schema: -; Owner: postgres
+-- Name: pgasus; Type: SCHEMA; Schema: -; Owner: postgres
 --
 
-CREATE SCHEMA goml;
+CREATE SCHEMA pgasus;
 
 
-SET search_path = goml, pg_catalog;
+SET search_path = pgasus, pg_catalog;
 
 --
 -- TOC entry 1864 (class 1247 OID 16598)
--- Name: http_method; Type: TYPE; Schema: goml; Owner: laurent
+-- Name: http_method; Type: TYPE; Schema: pgasus; Owner: laurent
 --
 
 CREATE TYPE http_method AS ENUM (
@@ -39,7 +39,7 @@ CREATE TYPE http_method AS ENUM (
 
 --
 -- TOC entry 1867 (class 1247 OID 16610)
--- Name: object_type; Type: TYPE; Schema: goml; Owner: laurent
+-- Name: object_type; Type: TYPE; Schema: pgasus; Owner: laurent
 --
 
 CREATE TYPE object_type AS ENUM (
@@ -54,7 +54,7 @@ SET default_with_oids = false;
 
 --
 -- TOC entry 175 (class 1259 OID 16620)
--- Name: routes; Type: TABLE; Schema: goml; Owner: laurent; Tablespace: 
+-- Name: routes; Type: TABLE; Schema: pgasus; Owner: laurent; Tablespace: 
 --
 
 CREATE TABLE routes (
@@ -76,7 +76,7 @@ CREATE TABLE routes (
 
 --
 -- TOC entry 174 (class 1259 OID 16618)
--- Name: routes_rule_id_seq; Type: SEQUENCE; Schema: goml; Owner: laurent
+-- Name: routes_rule_id_seq; Type: SEQUENCE; Schema: pgasus; Owner: laurent
 --
 
 CREATE SEQUENCE routes_rule_id_seq
@@ -90,7 +90,7 @@ CREATE SEQUENCE routes_rule_id_seq
 --
 -- TOC entry 4270 (class 0 OID 0)
 -- Dependencies: 174
--- Name: routes_rule_id_seq; Type: SEQUENCE OWNED BY; Schema: goml; Owner: laurent
+-- Name: routes_rule_id_seq; Type: SEQUENCE OWNED BY; Schema: pgasus; Owner: laurent
 --
 
 ALTER SEQUENCE routes_rule_id_seq OWNED BY routes.route_id;
@@ -98,7 +98,7 @@ ALTER SEQUENCE routes_rule_id_seq OWNED BY routes.route_id;
 
 --
 -- TOC entry 4136 (class 2604 OID 16623)
--- Name: route_id; Type: DEFAULT; Schema: goml; Owner: laurent
+-- Name: route_id; Type: DEFAULT; Schema: pgasus; Owner: laurent
 --
 
 ALTER TABLE ONLY routes ALTER COLUMN route_id SET DEFAULT nextval('routes_rule_id_seq'::regclass);
@@ -106,7 +106,7 @@ ALTER TABLE ONLY routes ALTER COLUMN route_id SET DEFAULT nextval('routes_rule_i
 
 --
 -- TOC entry 4143 (class 2606 OID 16630)
--- Name: rules_rule_id_pkey; Type: CONSTRAINT; Schema: goml; Owner: laurent; Tablespace: 
+-- Name: rules_rule_id_pkey; Type: CONSTRAINT; Schema: pgasus; Owner: laurent; Tablespace: 
 --
 
 ALTER TABLE ONLY routes
