@@ -81,14 +81,14 @@ For insers, and updates, the new values of columns must be specified in the HTTP
 
 A simple URL may look like this:
 
-``GET /customers.json?f=eq(city,456)&s=street,!streetnr&l=10``
+`GET /customers.json?f=eq(city,456)&s=street,!streetnr&l=10`
 
-/customers identifies the resource being accessed.
+`/customers` identifies the resource being accessed.
 
-* *.json* is the output format, json or csv.
-* *eq(city,456)* is the filter keeping customers living in city 456.
-* *street,!streetnr* defines the ordering of result, by street name first, then by decreasing street number.
-* *10* is the limit on number of records to be returned
+* `.json` is the output format, json or csv.
+* `eq(city,456)` is the filter keeping customers living in city 456.
+* `street,!streetnr` defines the ordering of result, by street name first, then by decreasing street number.
+* `10` is the limit on number of records to be returned
 
 #### Composing requests to procedures
 
@@ -119,8 +119,8 @@ pgasus uses the notion of context when executing requests on the database. Postg
 All context variables will be put in the same namespace as specified in the configuration file to avoid conflicts with other parameters.
 
 The context is built in the following order:
-* Map HTTP header values accordingly to route's context_mapped_headers setting.
-* Load variables defined in route's context_mapped_variables setting. Looking first in route's variables if found, otherwise in cookies. Overrides header.
+* Map HTTP header values accordingly to route's `context_mapped_headers` setting.
+* Load variables defined in route's `context_mapped_variables` setting. Looking first in route's variables if found, otherwise in cookies. Overrides header.
 
 #### Batch mode
 
@@ -156,21 +156,20 @@ On debian, one clean way to install go is to use [godeb](https://github.com/niem
 
 go will want its own directory to download source code, build, and install binaries. One nonintrusive way is the following, if you are using bash:
 
-``
+```
 mkdir ~/gocode
-
 echo "export GOPATH=~/gocode" >> ~/.bash_profile
-``
+```
 
 It may also be wise to update your $PATH to include *"~/gocode/bin/"*.
 
 You are now ready to download pgasus:
 
-``go get github.com/debackerl/pgasus``
+`go get github.com/debackerl/pgasus`
 
 and install it:
 
-``go install github.com/debackerl/pgasus``
+`go install github.com/debackerl/pgasus`
 
 You can now type *pgasus* to start the program.
 
@@ -178,6 +177,6 @@ You can now type *pgasus* to start the program.
 
 The program must be started with the path to its configuration path like this:
 
-``pgasus --config pgasus.conf``
+`pgasus --config pgasus.conf`
 
 Please have a look at the sample pgasus.conf file which is written in [TOML](https://github.com/toml-lang/toml) format.
