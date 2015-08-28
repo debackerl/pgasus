@@ -47,7 +47,7 @@ CREATE OR REPLACE FUNCTION routes_notify_trigger()
 	RETURNS trigger AS
 $BODY$
 begin
-	NOTIFY "goml.reload_routes";
+	NOTIFY "pgasus.reload_routes";
 	RETURN NULL;
 end
 $BODY$
