@@ -73,8 +73,8 @@ Response depends on the result type of procedure:
 #### Composing requests for relations
 
 The where clause is composed of values found in:
-* URL route variables, those are used as equality operators.
 * URL route constants, those are also used as equality operators.
+* URL route variables, those are used as equality operators. Overrides constants.
 * URL query string, accordingly to the format specified by [queryme](https://github.com/debackerl/queryme)
 
 For insers, and updates, the new values of columns must be specified in the HTTP body. See section below.
@@ -94,11 +94,11 @@ A simple URL may look like this:
 
 The using a procedure, the order of parameter is not important. Also, optional parameters remains optional.
 
-Values passed as parameters are found in:
-* URL route variables.
+Values loaded for each parameter are loaded in the following order:
 * URL route constants.
-* URL query string, where key is argument's name, and value is formatted in JSON.
-* HTTP body. See section below.
+* URL route variables. Overrides constants.
+* URL query string for GET and DELETE methods. Keys found in query string are argument names, and values are formatted in JSON.
+* HTTP body for POST and PUT methods. See section below.
 
 #### HTTP Body
 
@@ -118,11 +118,9 @@ pgasus uses the notion of context when executing requests on the database. Postg
 
 All context variables will be put in the same namespace as specified in the configuration file to avoid conflicts with other parameters.
 
-Four sources of information can be used to assign session variables:
-* HTTP header values
-* HTTP cookies
-* URL route variables
-* Constants as degined in URL route
+The context is built in the following order:
+* Map HTTP header values accordingly to route's context_mapped_headers setting.
+* Load variables defined in route's context_mapped_variables setting. Looking first in route's variables if found, otherwise in cookies. Overrides header.
 
 #### Batch mode
 
@@ -149,3 +147,36 @@ pgasus offers restriction on:
 * Total connection count
 * Excessive reads and writes durations on TCP sockets
 * Excessive execution time of SQL requests
+
+### Installation
+
+pgasus is a go program. You will need the go compiler to build the project.
+
+On debian, one clean way to install go is to use [godeb](https://github.com/niemeyer/godeb).
+
+go will want its own directory to download source code, build, and install binaries. One nonintrusive way is the following, if you are using bash:
+
+``
+mkdir ~/gocode
+echo "export GOPATH=~/gocode" >> ~/.bash_profile
+``
+
+It may also be wise to update your $PATH to include *~/gocode/bin/*.
+
+You are now ready to download pgasus:
+
+``go get github.com/debackerl/pgasus``
+
+and install it:
+
+``go install github.com/debackerl/pgasus``
+
+You can now type *pgasus* to start the program.
+
+### Configuration
+
+The program must be started with the path to its configuration path like this:
+
+``pgasus --config pgasus.conf``
+
+Please have a look at the sample pgasus.conf file which is written in [TOML](https://github.com/toml-lang/toml) format.
