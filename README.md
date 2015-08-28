@@ -161,7 +161,7 @@ mkdir ~/gocode
 echo "export GOPATH=~/gocode" >> ~/.bash_profile
 ``
 
-It may also be wise to update your $PATH to include *~/gocode/bin/*.
+It may also be wise to update your $PATH to include *"~/gocode/bin/"*.
 
 You are now ready to download pgasus:
 
