@@ -32,6 +32,8 @@ A table stored in the database stores all routes made available by pgasus. The r
 * Context-mapped headers, HTTP header values set in middleware's context
 * Context-mapped variables, route's parameters and cookie values set in middleware's context
 
+When the routes table is updated, a trigger sends a notification to pgasus which reload routes automatically. If you change columns of a relation, or arguments of a procedure, you may want to reload routes as well.
+
 ### Relations
 
 Four HTTP methods are available:
