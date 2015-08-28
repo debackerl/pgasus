@@ -158,6 +158,7 @@ go will want its own directory to download source code, build, and install binar
 
 ``
 mkdir ~/gocode
+
 echo "export GOPATH=~/gocode" >> ~/.bash_profile
 ``
 
