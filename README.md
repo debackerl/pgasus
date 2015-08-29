@@ -70,35 +70,49 @@ Response depends on the result type of procedure:
 
 ### Making a request
 
-#### Composing requests for relations
+#### Composing requests for relations (tables and views)
 
-The where clause is composed of values found in:
+The following values are used to compose the where clause of the generated SQL query:
 * URL route constants, those are also used as equality operators.
 * URL route variables, those are used as equality operators. Overrides constants.
 * URL query string, accordingly to the format specified by [queryme](https://github.com/debackerl/queryme)
 
-For insers, and updates, the new values of columns must be specified in the HTTP body. See section below.
+For inserts and updates, the new values of columns must be specified in the HTTP body. See section below.
+
+URL must satisfy the following format:
+
+`/ROUTE.FORMAT?f=FILTER&s=SORT&l=LIMIT`
+
+* `ROUTE` is a path matching one of the URL route.
+* `FORMAT` is the requested format for result. It can be `json` or `csv`, however csv doesn't support complex data types like arrays and objects.
+* `FILTER` (optional) is the condition used for the where condition in the resulting SQL query, see [queryme](https://github.com/debackerl/queryme).
+* `SORT` (optional) is the sorting order to be used in the SQL query, see [queryme](https://github.com/debackerl/queryme).
+* `LIMIT` (optional) is the maximum number of records to read from the database.
 
 A simple URL may look like this:
 
-`GET /customers.json?f=eq(city,456)&s=street,!streetnr&l=10`
+`/customers.json?f=eq(city,456)&s=street,!streetnr&l=10`
 
 `/customers` identifies the resource being accessed.
 
-* `.json` is the output format, json or csv.
-* `eq(city,456)` is the filter keeping customers living in city 456.
-* `street,!streetnr` defines the ordering of result, by street name first, then by decreasing street number.
-* `10` is the limit on number of records to be returned
+* `.json` is the output format.
+* `eq(city,456)` keeps customers living in city 456.
+* `street,!streetnr` sorts by street name first, then by decreasing street number.
+* `10` limits the result to 10 records.
 
 #### Composing requests to procedures
 
-The using a procedure, the order of parameter is not important. Also, optional parameters remains optional.
+When calling a procedure, the order of parameter is not important. Also, optional parameters remains optional.
 
 Values loaded for each parameter are loaded in the following order:
 * URL route constants.
 * URL route variables. Overrides constants.
 * URL query string for GET and DELETE methods. Keys found in query string are argument names, and values are formatted in JSON.
 * HTTP body for POST and PUT methods. See section below.
+
+A simple URL may look like this:
+
+`/tickets/create.json?kind="incident"&level=10&title="fire!"`
 
 #### HTTP Body
 
@@ -147,6 +161,12 @@ pgasus offers restriction on:
 * Total connection count
 * Excessive reads and writes durations on TCP sockets
 * Excessive execution time of SQL requests
+
+### Database design tips
+
+* Use triggers to validate changes made to tables when using routes to relations.
+* For multi-language web sites, put the language desired in the route. Then load this parameter in the database context using the `context_mapped_variables` setting of the routes table. Then you can create views on table to localise the data, or use this context variable in your procedure.
+* If you use AJAX to connect to pgasus, load the user session id from a cookie by configuring the proper cookie name in the routes table. Then to show only records relevent to a user, create a view where a filter is applied using the session id stored in the database context. It is also possible to use row-level policies to restrict accesses based on the session id with PostgreSQL 9.5+.
 
 ### Installation
 
