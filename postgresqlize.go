@@ -105,17 +105,18 @@ func (s *predicateSqlizer) VisitEq(field queryme.Field, operands []queryme.Value
 		s.AppendSql("false")
 	case 1:
 		s.AppendId(f)
-		isArray := s.isFieldArray(f)
-		if isArray {
+		
+		if s.isFieldArray(f) {
 			s.AppendSql("@>ARRAY[")
-		} else {
-			s.AppendSql("=")
-		}
-		s.AppendValue(f, operands[0])
-		if isArray {
+			s.AppendValue(f, operands[0])
 			s.AppendSql("]::")
 			typ, _ := s.ArgumentsType[f]
 			s.AppendSql(typ)
+		} else if operands[0] == nil {
+			s.AppendSql(" IS NULL")
+		} else {
+			s.AppendSql("=")
+			s.AppendValue(f, operands[0])
 		}
 	default:
 		s.AppendId(f)
@@ -131,14 +132,31 @@ func (s *predicateSqlizer) VisitEq(field queryme.Field, operands []queryme.Value
 			typ, _ := s.ArgumentsType[f]
 			s.AppendSql(typ)
 		} else {
-			s.AppendSql(" IN (")
-			for i, op := range operands {
-				if i > 0 {
-					s.AppendSql(",")
+			seen := 0
+			test_null := false
+			
+			for _, op := range operands {
+				if op == nil {
+					test_null = true
+				} else {
+					if seen == 0 {
+						s.AppendSql(" IN (")
+					} else {
+						s.AppendSql(",")
+					}
+					s.AppendValue(f, op)
+					seen++
 				}
-				s.AppendValue(f, op)
 			}
-			s.AppendSql(")")
+			if seen > 0 {
+				s.AppendSql(")")
+			}
+			
+			if test_null {
+				s.AppendSql(" OR ")
+				s.AppendId(f)
+				s.AppendSql(" IS NULL")
+			}
 		}
 	}
 }
