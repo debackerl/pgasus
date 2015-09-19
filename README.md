@@ -150,6 +150,8 @@ CSV output format does not support batch mode as it is not recursive.
 
 A CA certificate can be configured to validate client application certificate for TLS mutual authentication. In this case, client's common name is used as database user. This mean that accesses to database objects can be restricted on a per application basis.
 
+If HTTP client doesn't support mutual authentication, basic HTTP authentication can also be used in which case the provided password is matched against encrypted password stored in Postgres. This mode can only be used over a TLS connection to keep credential confidential.
+
 Also, because pgasus has the notion of context, a session id could be passed in the HTTP header, and stored as a PostgreSQL configuration in the database session. That way, you can check session id against a table of active sessions, and verify permissions when accessing data (e.g. using row-level policies in PostgreSQL 9.5+).
 
 ### Self-defense

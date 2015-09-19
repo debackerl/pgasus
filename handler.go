@@ -406,7 +406,11 @@ func (h *RequestHandler) makeNonBatchRouteHandler(route *route) denco.HandlerFun
 		}
 		defer tx.Rollback()
 		
-		clientCn := getClientCn(r, h.DefaultCn)
+		clientCn, err := getClientRole(tx, r, h.DefaultCn)
+		if err != nil {
+			panic(err)
+		}
+		
 		context := makeContext(r, route.ContextHeaders, params, route.ContextVariables)
 		if err := setTxContext(tx, h.StatementTimeoutSecs, clientCn, h.ContextParameterName, context); err != nil {
 			panic(err)
@@ -481,7 +485,11 @@ func (h *RequestHandler) makeBatchRouteHandler(route *route) denco.HandlerFunc {
 		}
 		defer tx.Rollback()
 		
-		clientCn := getClientCn(r, h.DefaultCn)
+		clientCn, err := getClientRole(tx, r, h.DefaultCn)
+		if err != nil {
+			panic(err)
+		}
+		
 		context := makeContext(r, route.ContextHeaders, params, route.ContextVariables)
 		if err := setTxContext(tx, h.StatementTimeoutSecs, clientCn, h.ContextParameterName, context); err != nil {
 			panic(err)
@@ -589,7 +597,11 @@ func (h *RequestHandler) makeProcedureRouteHandler(route *route) denco.HandlerFu
 		}
 		defer tx.Rollback()
 		
-		clientCn := getClientCn(r, h.DefaultCn)
+		clientCn, err := getClientRole(tx, r, h.DefaultCn)
+		if err != nil {
+			panic(err)
+		}
+		
 		context := makeContext(r, route.ContextHeaders, params, route.ContextVariables)
 		if err := setTxContext(tx, h.StatementTimeoutSecs, clientCn, h.ContextParameterName, context); err != nil {
 			panic(err)
@@ -743,11 +755,55 @@ func getResponder(r *http.Request, maxResponseSizeKbytes int64) (RecordSetHttpRe
 	}
 }
 
-func getClientCn(r *http.Request, defaultCn string) string {
+func getClientRole(tx *pgx.Tx, r *http.Request, defaultCn string) (string, error) {
 	if r.TLS != nil && r.TLS.PeerCertificates != nil && len(r.TLS.PeerCertificates) > 0 {
-		return r.TLS.PeerCertificates[0].Subject.CommonName
+		return r.TLS.PeerCertificates[0].Subject.CommonName, nil
 	}
-	return defaultCn
+	
+	if h, ok := r.Header["Authorization"]; ok {
+		if r.TLS == nil {
+			return "", errors.New("Authorization denied over unencrypted connections.")
+		}
+		
+		parts := strings.SplitN(h[0], " ", 2)
+		if len(parts) == 2 && parts[0] == "Basic" {
+			if usrpwd, err := base64.StdEncoding.DecodeString(parts[1]); err == nil {
+				parts = strings.Split(string(usrpwd), ":")
+				if len(parts) == 2 {
+					usr := parts[0]
+					pwd := parts[1]
+					
+					if err := checkDbRole(tx, usr, pwd); err != nil {
+						return "", err
+					}
+					
+					return usr, nil
+				}
+			}
+		}
+	}
+	
+	return defaultCn, nil
+}
+
+func checkDbRole(tx *pgx.Tx, role string, password string) error {
+	builder := NewSqlBuilder()
+	
+	builder.WriteSql("SELECT true FROM pg_authid WHERE (rolvaliduntil > now() OR rolvaliduntil IS NULL) AND rolname=")
+	builder.WriteValue(role)
+	builder.WriteSql(" AND CASE WHEN substr(rolpassword, 1, 3) = 'md5' THEN rolpassword = 'md5' || encode(digest(")
+	builder.WriteValue(password)
+	builder.WriteSql(" || ")
+	builder.WriteValue(role)
+	builder.WriteSql(", 'md5'), 'hex') ELSE FALSE END")
+	
+	if tag, err := tx.Exec(builder.Sql(), builder.Values()...); err != nil {
+		return err
+	} else if tag.RowsAffected() == 0 {
+		return errors.New("Incorrect credentials.")
+	}
+	
+	return nil
 }
 
 func parseQueryString(r *http.Request, globalQuery map[string]interface{}, filterQueryName string, sortQueryName string, limitQueryName string, maxLimit int64) (queryme.Predicate, []*queryme.SortOrder, int64, error) {
