@@ -118,13 +118,13 @@ A simple URL may look like this:
 
 Not everything fits in a URL. A URL is used to identify and filter only.
 
-HTTP bodies are encoded in JSON format.
+The HTTP body is used by client side to send (large amount of) data. Data can be encoded in JSON (default), or using Postgres literals when the Content-Type of the request is set to `application/x-www-form-urlencoded`.
 
-The HTTP body is used by client side to send (large amount of) data. This can happen in three cases:
+HTTP bodies are used in three cases:
 
-* POST and PUT to procedure: Body is a JSON object, which fields are arguments to be provided to procedure. If URL defines variables of equal names, URL variables have priority.
-* POST on relation: Body is a JSON object, which fields are values of columns of new record being inserted.
-* PUT on relation: Body is a JSON object, which fields are values of columns of records being updated.
+* POST and PUT to procedure: fields sent are arguments to be provided to procedure. If URL defines variables of equal names, URL variables have priority.
+* POST on relation: fields are values of columns of new record being inserted.
+* PUT on relation: fields are values of columns of records being updated.
 
 #### Context
 
