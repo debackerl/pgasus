@@ -3,53 +3,96 @@ package main
 import (
 	"github.com/antonholmquist/jason"
 	"github.com/jackc/pgx"
+	"bytes"
 	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
 func decodeHttpBody(w http.ResponseWriter, r *http.Request, argumentsType map[string]string, readonlyFields map[string]struct{}, maxBodySizeKbytes int64) (queries []map[string]interface{}, batch bool, err error) {
-	//r.Header.Get("Content-Type")
+	body := http.MaxBytesReader(w, r.Body, maxBodySizeKbytes)
 	
 	queries = make([]map[string]interface{}, 0, 1)
 	
-	var value *jason.Value
-	
-	value, err = jason.NewValueFromReader(http.MaxBytesReader(w, r.Body, maxBodySizeKbytes))
-	if err != nil {
-		return
-	}
-	
-	if array, ok := value.Array(); ok == nil {
-		for _, subValue := range array {
-			if object, ok := subValue.Object(); ok == nil {
-				var query map[string]interface{}
-				query, err = prepareArgumentsFromObject(object, argumentsType, readonlyFields)
-				if err != nil {
-					queries = nil
-					return
-				}
-				
-				queries = append(queries, query)
-			} else {
-				err = errors.New("Invalid json value type, array must contain objects.")
-			}
+	if r.Header.Get("Content-Type") == "application/x-www-form-urlencoded" {
+		buf := new(bytes.Buffer)
+		buf.ReadFrom(body)
+		
+		var values url.Values
+		values, err = url.ParseQuery(buf.String())
+		if err != nil {
+			queries = nil
+			return
 		}
-		batch = true
-	} else if object, ok := value.Object(); ok == nil {
+		
 		var query map[string]interface{}
-		query, err = prepareArgumentsFromObject(object, argumentsType, readonlyFields)
+		query, err = prepareArgumentsFromForm(values, argumentsType, readonlyFields)
 		if err != nil {
 			queries = nil
 			return
 		}
 		
 		queries = append(queries, query)
-		batch = false
 	} else {
-		err = errors.New("Invalid json value type, must be array or object.")
+		var value *jason.Value
+		
+		value, err = jason.NewValueFromReader(body)
+		if err != nil {
+			return
+		}
+		
+		if array, ok := value.Array(); ok == nil {
+			for _, subValue := range array {
+				if object, ok := subValue.Object(); ok == nil {
+					var query map[string]interface{}
+					query, err = prepareArgumentsFromObject(object, argumentsType, readonlyFields)
+					if err != nil {
+						queries = nil
+						return
+					}
+					
+					queries = append(queries, query)
+				} else {
+					err = errors.New("Invalid json value type, array must contain objects.")
+				}
+			}
+			batch = true
+		} else if object, ok := value.Object(); ok == nil {
+			var query map[string]interface{}
+			query, err = prepareArgumentsFromObject(object, argumentsType, readonlyFields)
+			if err != nil {
+				queries = nil
+				return
+			}
+			
+			queries = append(queries, query)
+			batch = false
+		} else {
+			err = errors.New("Invalid json value type, must be array or object.")
+		}
+	}
+	
+	return
+}
+
+func prepareArgumentsFromForm(arguments url.Values, argumentsType map[string]string, readonlyFields map[string]struct{}) (query map[string]interface{}, err error) {
+	query = make(map[string]interface{})
+	
+	for key, value := range arguments {
+		key = strings.ToLower(key)
+		
+		if readonlyFields != nil {
+			if _, ok := readonlyFields[key]; ok {
+				continue
+			}
+		}
+		
+		if _, ok := argumentsType[key]; ok {
+			query[key] = value[0]
+		}
 	}
 	
 	return
