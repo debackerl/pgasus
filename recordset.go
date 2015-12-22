@@ -212,6 +212,8 @@ func (rs *RecordSet) scan(col int, vr *pgx.ValueReader) (err error) {
 	if vr.Len() == -1 {
 		v.Null(rs)
 	} else {
+		// more complete source of Oids: https://github.com/epgsql/epgsql/blob/master/src/epgsql_types.erl
+		
 		switch t.FormatCode {
 		case pgx.TextFormatCode:
 			s := vr.ReadString(vr.Len())
@@ -242,6 +244,10 @@ func (rs *RecordSet) scan(col int, vr *pgx.ValueReader) (err error) {
 				err = rs.decodeFloat4(vr)
 			case pgx.Float8Oid:
 				err = rs.decodeFloat8(vr)
+			case pgx.TimestampOid, pgx.TimestampTzOid:
+				err = rs.decodeTimestamp(vr)
+			case pgx.DateOid:
+				err = rs.decodeDate(vr)
 			case pgx.BoolArrayOid:
 				err = rs.decodeBoolArray(vr)
 			case pgx.Int2ArrayOid:
@@ -258,12 +264,8 @@ func (rs *RecordSet) scan(col int, vr *pgx.ValueReader) (err error) {
 				err = rs.decodeTextArray(vr)
 			case pgx.TimestampArrayOid, pgx.TimestampTzArrayOid:
 				err = rs.decodeTimestampArray(vr)
-			case pgx.DateOid:
-				err = rs.decodeDate(vr)
-			case pgx.TimestampTzOid:
-				err = rs.decodeTimestampTz(vr)
-			case pgx.TimestampOid:
-				err = rs.decodeTimestamp(vr)
+			case 1182:
+				err = rs.decodeDateArray(vr)
 			default:
 				err = errors.New("Unknown value type for binary format.")
 			}
@@ -279,7 +281,7 @@ func (rs *RecordSet) scan(col int, vr *pgx.ValueReader) (err error) {
 
 func (rs *RecordSet) decodeBool(vr *pgx.ValueReader) error {
 	if vr.Len() != 1 {
-		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for an bool: %d", vr.Len()))
+		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a bool: %d", vr.Len()))
 	}
 
 	b := vr.ReadByte()
@@ -312,7 +314,7 @@ func (rs *RecordSet) decodeInt4(vr *pgx.ValueReader) error {
 
 func (rs *RecordSet) decodeFloat4(vr *pgx.ValueReader) error {
 	if vr.Len() != 4 {
-		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for an float4: %d", vr.Len()))
+		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a float4: %d", vr.Len()))
 	}
 
 	i := vr.ReadInt32()
@@ -321,7 +323,7 @@ func (rs *RecordSet) decodeFloat4(vr *pgx.ValueReader) error {
 
 func (rs *RecordSet) decodeFloat8(vr *pgx.ValueReader) error {
 	if vr.Len() != 8 {
-		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for an float8: %d", vr.Len()))
+		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a float8: %d", vr.Len()))
 	}
 
 	i := vr.ReadInt64()
@@ -332,34 +334,24 @@ func (rs *RecordSet) decodeBytea(vr *pgx.ValueReader) error {
 	return rs.Visitor.Bytes(rs, vr.ReadBytes(vr.Len()))
 }
 
-func (rs *RecordSet) decodeDate(vr *pgx.ValueReader) error {
-	if vr.Len() != 4 {
-		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for an date: %d", vr.Len()))
-	}
-	dayOffset := vr.ReadInt32()
-	return rs.Visitor.Time(rs, time.Date(2000, 1, int(1+dayOffset), 0, 0, 0, 0, time.Local))
-}
-
 const microsecFromUnixEpochToY2K = 946684800 * 1000000
-
-func (rs *RecordSet) decodeTimestampTz(vr *pgx.ValueReader) error {
-	if vr.Len() != 8 {
-		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for an timestamptz: %d", vr.Len()))
-	}
-
-	microsecSinceY2K := vr.ReadInt64()
-	microsecSinceUnixEpoch := microsecFromUnixEpochToY2K + microsecSinceY2K
-	return rs.Visitor.Time(rs, time.Unix(microsecSinceUnixEpoch/1000000, (microsecSinceUnixEpoch%1000000)*1000))
-}
 
 func (rs *RecordSet) decodeTimestamp(vr *pgx.ValueReader) error {
 	if vr.Len() != 8 {
-		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for an timestamp: %d", vr.Len()))
+		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a timestamp: %d", vr.Len()))
 	}
 
 	microsecSinceY2K := vr.ReadInt64()
 	microsecSinceUnixEpoch := microsecFromUnixEpochToY2K + microsecSinceY2K
 	return rs.Visitor.Time(rs, time.Unix(microsecSinceUnixEpoch/1000000, (microsecSinceUnixEpoch%1000000)*1000))
+}
+
+func (rs *RecordSet) decodeDate(vr *pgx.ValueReader) error {
+	if vr.Len() != 4 {
+		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a date: %d", vr.Len()))
+	}
+	dayOffset := vr.ReadInt32()
+	return rs.Visitor.Time(rs, time.Date(2000, 1, int(1+dayOffset), 0, 0, 0, 0, time.Local))
 }
 
 func (rs *RecordSet) decode1dArrayHeader(vr *pgx.ValueReader) (length int32, err error) {
@@ -407,7 +399,7 @@ func (rs *RecordSet) decodeBoolArray(vr *pgx.ValueReader) error {
 				return err
 			}
 		default:
-			return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for an bool element: %d", elSize))
+			return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a bool element: %d", elSize))
 		}
 	}
 
@@ -524,7 +516,7 @@ func (rs *RecordSet) decodeFloat4Array(vr *pgx.ValueReader) error {
 				return err
 			}
 		default:
-			return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for an float4 element: %d", elSize))
+			return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a float4 element: %d", elSize))
 		}
 	}
 
@@ -554,7 +546,7 @@ func (rs *RecordSet) decodeFloat8Array(vr *pgx.ValueReader) error {
 				return err
 			}
 		default:
-			return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for an float4 element: %d", elSize))
+			return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a float4 element: %d", elSize))
 		}
 	}
 
@@ -601,9 +593,7 @@ func (rs *RecordSet) decodeTimestampArray(vr *pgx.ValueReader) error {
 		elSize := vr.ReadInt32()
 		switch elSize {
 		case 8:
-			microsecSinceY2K := vr.ReadInt64()
-			microsecSinceUnixEpoch := microsecFromUnixEpochToY2K + microsecSinceY2K
-			if err := rs.Visitor.Time(rs, time.Unix(microsecSinceUnixEpoch/1000000, (microsecSinceUnixEpoch%1000000)*1000)); err != nil {
+			if err := rs.decodeTimestamp(vr); err != nil {
 				return err
 			}
 		case -1:
@@ -611,7 +601,36 @@ func (rs *RecordSet) decodeTimestampArray(vr *pgx.ValueReader) error {
 				return err
 			}
 		default:
-			return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for an time.Time element: %d", elSize))
+			return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a timestamp. Timestamp element: %d", elSize))
+		}
+	}
+
+	return rs.Visitor.EndArray(rs)
+}
+
+func (rs *RecordSet) decodeDateArray(vr *pgx.ValueReader) error {
+	numElems, err := rs.decode1dArrayHeader(vr)
+	if err != nil {
+		return err
+	}
+
+	if err := rs.Visitor.BeginArray(rs, int(numElems)); err != nil {
+		return err
+	}
+
+	for i := int32(0); i < numElems; i++ {
+		elSize := vr.ReadInt32()
+		switch elSize {
+		case 4:
+			if err := rs.decodeDate(vr); err != nil {
+				return err
+			}
+		case -1:
+			if err := rs.Visitor.Null(rs); err != nil {
+				return err
+			}
+		default:
+			return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a date. Date element: %d", elSize))
 		}
 	}
 

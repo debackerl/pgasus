@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	appCmdLine = kingpin.New("goml", "PostgreSQL-fueled middle layer.")
+	appCmdLine = kingpin.New("pgasus", "PostgreSQL API Server for Universal Stack.")
 	configPathArg = appCmdLine.Flag("config", "Path to configuration file.").Required().String()
 )
 
@@ -59,8 +59,6 @@ var config struct {
 		SortQueryName string
 		LimitQueryName string
 	}
-
-	Static []StaticRoute
 }
 
 func loadConfig(path string) {
@@ -69,7 +67,7 @@ func loadConfig(path string) {
 	config.Http.ReadTimeoutSecs = 10
 	config.Http.WriteTimeoutSecs = 10
 	config.Http.ShutdownTimeoutSecs = 60
-	config.Postgres.ContextParameterName = "goml"
+	config.Postgres.ContextParameterName = "context"
 	config.Postgres.RoutesTableName = "routes"
 	
 	f, err := os.Open(path)
@@ -142,7 +140,7 @@ func main() {
 		ListenLimit: config.Http.MaxOpenConnections,
 		ShutdownInitiated: func() {
 			if config.System.Verbose {
-				log.Println("Goml shutdown requested.")
+				log.Println("pgasus shutdown requested.")
 			}
 			handler.StopReloads()
 		},
@@ -159,7 +157,7 @@ func main() {
 	}
 	
 	if config.System.Verbose {
-		log.Println("Goml started.")
+		log.Println("pgasus started.")
 	}
 	
 	if config.Http.Key != "" && config.Http.Cert != "" {

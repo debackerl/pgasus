@@ -118,7 +118,7 @@ A simple URL may look like this:
 
 Not everything fits in a URL. A URL is used to identify and filter only.
 
-The HTTP body is used by client side to send (large amount of) data. Data can be encoded in JSON (default), or using Postgres literals when the Content-Type of the request is set to `application/x-www-form-urlencoded`.
+The HTTP body is used by client side to send (a large amount of) data. Data can be encoded in JSON (default), or using Postgres literals when the Content-Type of the request is set to `application/x-www-form-urlencoded`.
 
 HTTP bodies are used in three cases:
 

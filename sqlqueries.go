@@ -28,7 +28,7 @@ func buildSelectSqlQuery(sql *SqlBuilder, ftsFunction string, argumentsType map[
 	return nil
 }
 
-func buildInsertSqlQuery(sql *SqlBuilder, ftsFunction string, argumentsType map[string]string, relation string, filter queryme.Predicate, query map[string]interface{}) error {
+func buildInsertSqlQuery(sql *SqlBuilder, ftsFunction string, argumentsType map[string]string, relation string, query map[string]interface{}) error {
 	sql.WriteSql("INSERT INTO ")
 	sql.WriteId(relation)
 	
@@ -58,11 +58,6 @@ func buildInsertSqlQuery(sql *SqlBuilder, ftsFunction string, argumentsType map[
 		sql.WriteValue(value)
 		
 		i++
-	}
-	
-	if filter != nil {
-		sql.WriteSql(" WHERE ")
-		PredicateToPostgreSql(sql, ftsFunction, argumentsType, filter)
 	}
 	
 	sql.WriteSql(" RETURNING *")

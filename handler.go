@@ -73,7 +73,6 @@ type RequestHandler struct {
 	FilterQueryName string
 	SortQueryName string
 	LimitQueryName string
-	Static []StaticRoute
 	
 	db *pgx.ConnPool
 	reqLogFile *os.File
@@ -263,11 +262,6 @@ func (h *RequestHandler) createHandlers() error {
 		}
 		
 		handlers = append(handlers, mux.Handler(strings.ToUpper(r.Method), r.UrlPath, routeHandler))
-	}
-	
-	for _, r := range h.Static {
-		routeHandler := h.makeStaticFilesRouteHandler(&r)
-		handlers = append(handlers, mux.Handler("GET", r.Route + "/*filepath", routeHandler))
 	}
 	
 	handler, err := mux.Build(handlers)
@@ -501,12 +495,16 @@ func (h *RequestHandler) makeBatchRouteHandler(route *route) denco.HandlerFunc {
 		
 		switch route.Method {
 		case "post":
+			if filter != nil {
+				panic(errors.New("post requests on relations do not support filters."))
+			}
+			
 			for _, query := range queries {
-				processBatchPost(h, route, tx, responder, query, filter)
+				processBatchPost(h, route, tx, responder, query)
 			}
 		case "put":
 			if batch {
-				panic(errors.New("put requests do not support batch mode."))
+				panic(errors.New("put requests on relations do not support batch mode."))
 			} else {
 				query := queries[0]
 				
@@ -542,10 +540,10 @@ func (h *RequestHandler) makeBatchRouteHandler(route *route) denco.HandlerFunc {
 	}
 }
 
-func processBatchPost(h *RequestHandler, route *route, tx *pgx.Tx, responder RecordSetHttpResponder, query map[string]interface{}, filter queryme.Predicate) {
+func processBatchPost(h *RequestHandler, route *route, tx *pgx.Tx, responder RecordSetHttpResponder, query map[string]interface{}) {
 	sql := NewSqlBuilder()
 	
-	if err := buildInsertSqlQuery(&sql, h.FtsFunctionName, route.ParametersTypes, route.ObjectName, filter, query); err != nil {
+	if err := buildInsertSqlQuery(&sql, h.FtsFunctionName, route.ParametersTypes, route.ObjectName, query); err != nil {
 		panic(err)
 	}
 	
@@ -661,28 +659,6 @@ func processProcedureQuery(route *route, tx *pgx.Tx, responder RecordSetHttpResp
 				panic(err)
 			}
 		}
-	}
-}
-
-func (h *RequestHandler) makeStaticFilesRouteHandler(route *StaticRoute) denco.HandlerFunc {
-	handler := http.FileServer(http.Dir(route.Path))
-	
-	return func (w http.ResponseWriter, r *http.Request, params denco.Params) {
-		// any request for a file which name ends with period '.' will not be satisfied
-		
-		ext := r.Header.Get("X-Accept")
-		
-		var newUrl bytes.Buffer
-		newUrl.WriteRune('/')
-		newUrl.WriteString(params.Get("filepath"))
-		if ext != "" {
-			newUrl.WriteRune('.')
-			newUrl.WriteString(ext)
-		}
-		
-		r.URL.Path = newUrl.String()
-		setCacheControl(w, route.TtlSecs, route.IsPublic)
-		handler.ServeHTTP(w, r)
 	}
 }
 
