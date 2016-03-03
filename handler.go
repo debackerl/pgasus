@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgx"
 	//"github.com/kr/pretty"
 	"encoding/base64"
-	"bytes"
 	"errors"
 	"fmt"
 	"log"
@@ -73,6 +72,7 @@ type RequestHandler struct {
 	FilterQueryName string
 	SortQueryName string
 	LimitQueryName string
+	BinaryFormats map[string]string
 	
 	db *pgx.ConnPool
 	reqLogFile *os.File
@@ -138,7 +138,7 @@ func (h *RequestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		ext := path[sepIdx+1:]
 		r.URL.Path = path[0:sepIdx]
-		r.Header.Set("X-Accept", ext)
+		r.Header.Set("X-Accept-Extension", ext)
 		
 		if h.UpdateForwardedForHeader {
 			if ip, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
@@ -389,7 +389,7 @@ func (h *RequestHandler) makeNonBatchRouteHandler(route *route) denco.HandlerFun
 			panic(err)
 		}
 		
-		responder, err := getResponder(r, h.MaxResponseSizeKbytes)
+		responder, err := h.getResponder(r, h.MaxResponseSizeKbytes)
 		if err != nil {
 			panic(err)
 		}
@@ -468,7 +468,7 @@ func (h *RequestHandler) makeBatchRouteHandler(route *route) denco.HandlerFunc {
 			panic(err)
 		}
 		
-		responder, err := getResponder(r, h.MaxResponseSizeKbytes)
+		responder, err := h.getResponder(r, h.MaxResponseSizeKbytes)
 		if err != nil {
 			panic(err)
 		}
@@ -584,7 +584,7 @@ func (h *RequestHandler) makeProcedureRouteHandler(route *route) denco.HandlerFu
 			}
 		}
 		
-		responder, err := getResponder(r, h.MaxResponseSizeKbytes)
+		responder, err := h.getResponder(r, h.MaxResponseSizeKbytes)
 		if err != nil {
 			panic(err)
 		}
@@ -719,14 +719,22 @@ func paramsDecoder(query map[string]interface{}, params denco.Params, argumentsT
 	return
 }
 
-func getResponder(r *http.Request, maxResponseSizeKbytes int64) (RecordSetHttpResponder, error) {
+func (h *RequestHandler) getResponder(r *http.Request, maxResponseSizeKbytes int64) (RecordSetHttpResponder, error) {
 	// the following header is provided by this program just before routing
-	switch r.Header.Get("X-Accept") {
+	accept := r.Header.Get("X-Accept-Extension")
+	
+	switch accept {
 	case "json":
 		return NewJsonRecordSetWriter(maxResponseSizeKbytes), nil
 	case "csv":
 		return &CsvRecordSetWriter{MaxResponseSizeBytes: maxResponseSizeKbytes << 10}, nil
+	case "bin":
+		return &BinRecordSetWriter{MaxResponseSizeBytes: maxResponseSizeKbytes << 10, ContentType: "application/octet-stream"}, nil
 	default:
+		if mimeType, ok := h.BinaryFormats[accept]; ok {
+			return &BinRecordSetWriter{MaxResponseSizeBytes: maxResponseSizeKbytes << 10, ContentType: mimeType}, nil
+		}
+		
 		return nil, errors.New("Requested format unsupported.")
 	}
 }

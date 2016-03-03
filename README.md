@@ -84,7 +84,7 @@ URL must satisfy the following format:
 `/ROUTE.FORMAT?f=FILTER&s=SORT&l=LIMIT`
 
 * `ROUTE` is a path matching one of the URL route.
-* `FORMAT` is the requested format for result. It can be `json` or `csv`, however csv doesn't support complex data types like arrays and objects.
+* `FORMAT` is the requested format for result.
 * `FILTER` (optional) is the condition used for the where condition in the resulting SQL query, see [queryme](https://github.com/debackerl/queryme).
 * `SORT` (optional) is the sorting order to be used in the SQL query, see [queryme](https://github.com/debackerl/queryme).
 * `LIMIT` (optional) is the maximum number of records to read from the database.
@@ -99,6 +99,17 @@ A simple URL may look like this:
 * `eq(city,456)` keeps customers living in city 456.
 * `street,!streetnr` sorts by street name first, then by decreasing street number.
 * `10` limits the result to 10 records.
+
+#### Formats
+
+Three build-in data formats can be used to generate the content of the HTTP response:
+* `json` is the only format able to serialize any kind of result from the database.
+* `csv` is UTF-8 encoded, and will not serialize arrays and other composite data types.
+* `bin` is used to return result of a procedure as is. Text is UTF-8 encoded. Only scalar data types are supported.
+
+In addition, the configuration file may define several `binary_formats` sections. Those are used when format isn't one of the build-in formats. Each section must define two fields:
+* `extension` is the format as specified in the requested URL.
+* `mime_type` is the corresponding MIME type to be specified in the HTTP response's header.
 
 #### Composing requests to procedures
 
@@ -133,7 +144,7 @@ pgasus uses the notion of context when executing requests on the database. Postg
 All context variables will be put in the same namespace as specified in the configuration file to avoid conflicts with other parameters.
 
 The context is built in the following order:
-* Map HTTP header values accordingly to route's `context_mapped_headers` setting.
+* Map HTTP header values accordingly to route's `context_mapped_headers` setting. A special header, X-Accept-Extension, is initialized by pgasus with file extension as specified in requested URL.
 * Load variables defined in route's `context_mapped_variables` setting. Looking first in route's variables if found, otherwise in cookies. Overrides header.
 
 #### Batch mode
