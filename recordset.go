@@ -28,9 +28,9 @@ import (
 	//"gopkg.in/jackc/pgx.v2"
 	"github.com/jackc/pgx"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math"
+	"net"
 	"time"
 )
 
@@ -240,10 +240,16 @@ func (rs *RecordSet) scan(col int, vr *pgx.ValueReader) (err error) {
 				err = rs.decodeInt2(vr)
 			case pgx.Int4Oid:
 				err = rs.decodeInt4(vr)
+			case pgx.TextOid, pgx.VarcharOid, pgx.UnknownOid:
+				err = rs.decodeText(vr)
+			case pgx.OidOid:
+				err = rs.decodeOid(vr)
 			case pgx.Float4Oid:
 				err = rs.decodeFloat4(vr)
 			case pgx.Float8Oid:
 				err = rs.decodeFloat8(vr)
+			case pgx.InetOid, pgx.CidrOid:
+				err = rs.decodeInet(vr)
 			case pgx.TimestampOid, pgx.TimestampTzOid:
 				err = rs.decodeTimestamp(vr)
 			case pgx.DateOid:
@@ -267,7 +273,7 @@ func (rs *RecordSet) scan(col int, vr *pgx.ValueReader) (err error) {
 			case 1182:
 				err = rs.decodeDateArray(vr)
 			default:
-				err = errors.New("Unknown value type for binary format.")
+				err = fmt.Errorf("Unknown data type for binary format: %d", t.DataType)
 			}
 		}
 	}
@@ -310,6 +316,39 @@ func (rs *RecordSet) decodeInt4(vr *pgx.ValueReader) error {
 	}
 
 	return rs.Visitor.Integer(rs, int64(vr.ReadInt32()))
+}
+
+func (rs *RecordSet) decodeText(vr *pgx.ValueReader) error {
+	if vr.Len() == -1 {
+		return pgx.ProtocolError("Cannot decode null into string")
+	}
+
+	return rs.Visitor.String(rs, vr.ReadString(vr.Len()))
+}
+
+func (rs *RecordSet) decodeOid(vr *pgx.ValueReader) error {
+	if vr.Len() != 4 {
+		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for an Oid: %d", vr.Len()))
+	}
+
+	return rs.Visitor.Integer(rs, int64(vr.ReadInt32()))
+}
+
+func (rs *RecordSet) decodeInet(vr *pgx.ValueReader) error {
+	if vr.Len() != 8 && vr.Len() != 20 {
+		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a %s: %d", vr.Type().Name, vr.Len()))
+	}
+
+	vr.ReadByte() // ignore family
+	bits := vr.ReadByte()
+	vr.ReadByte() // ignore is_cidr
+	addressLength := vr.ReadByte()
+
+	var ipnet net.IPNet
+	ipnet.IP = vr.ReadBytes(int32(addressLength))
+	ipnet.Mask = net.CIDRMask(int(bits), int(addressLength)*8)
+
+	return rs.Visitor.String(rs, ipnet.String())
 }
 
 func (rs *RecordSet) decodeFloat4(vr *pgx.ValueReader) error {
