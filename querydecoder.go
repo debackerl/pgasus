@@ -137,7 +137,7 @@ func prepareArgumentsFromQueryString(rawQuery string, argumentsType map[string]s
 		if typ, ok := argumentsType[k]; ok {
 			value, err := jason.NewValueFromBytes([]byte(vs[0]))
 			if err != nil {
-				panic(err)
+				return nil, err
 			}
 			
 			arg, err := decodeArgumentFromJsonValue(value, typ)

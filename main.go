@@ -40,10 +40,13 @@ var config struct {
 		ReadTimeoutSecs int
 		WriteTimeoutSecs int
 		ShutdownTimeoutSecs int
+		CookiesDomain string
+		CookiesPath string
 	}
 	
 	Postgres struct {
 		Socket string
+		Port uint16
 		Database string
 		UpdatesChannelName string
 		SearchPath string
@@ -100,7 +103,8 @@ func main() {
 	
 	var handler RequestHandler
 	handler.Verbose = config.System.Verbose
-	handler.Socket = config.Postgres.Socket
+	handler.Host = config.Postgres.Socket
+	handler.Port = config.Postgres.Port
 	handler.Database = config.Postgres.Database
 	handler.UpdatesChannelName = config.Postgres.UpdatesChannelName
 	handler.SearchPath = config.Postgres.SearchPath
@@ -113,6 +117,8 @@ func main() {
 	handler.UpdateForwardedForHeader = config.Http.UpdateForwardedForHeader
 	handler.MaxBodySizeKbytes = config.Http.MaxBodySizeKbytes
 	handler.MaxResponseSizeKbytes = config.Http.MaxResponseSizeKbytes
+	handler.CookiesDomain = config.Http.CookiesDomain
+	handler.CookiesPath = config.Http.CookiesPath
 	handler.FilterQueryName = config.Protocol.FilterQueryName
 	handler.SortQueryName = config.Protocol.SortQueryName
 	handler.LimitQueryName = config.Protocol.LimitQueryName

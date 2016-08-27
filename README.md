@@ -19,18 +19,31 @@ Design rules:
 
 ### Routes
 
-A table stored in the database stores all routes made available by pgasus. The reason to store this in the database is to be able to synchronize deployment of new tables and functions, while updating routes in a single transaction. Here are the fields:
-* HTTP method, get, post, put, delete
-* URL, like /enterprises/:entref/pos, containing variables. See [denco](https://github.com/naoina/denco) for format.
-* Object name, name of relation or procedure
-* Object type, relation, procedure
-* TTL, used for cache-control in HTTP response
-* Public/Private, used for cache-control in HTTP response
-* Hidden fields, fields hidden from result sets
-* Read-Only fields, fields that can be returned but not saved via inserts/updates
-* Constants, constant values set in middleware's context
-* Context-mapped headers, HTTP header values set in middleware's context
-* Context-mapped variables, route's parameters and cookie values set in middleware's context
+A table stored in the database stores all routes made available by pgasus. The reason to store this in the database is to be able to synchronize deployment of new tables and functions, while updating routes in a single transaction. Here are the columns:
+* route_id (integer): primary key
+* method (http_method): get, post, put, delete
+* url_path (text): like /enterprises/:entref/pos, containing variables. See [denco](https://github.com/naoina/denco) for format.
+* object_name (text): name of relation or procedure
+* object_type (object_type): relation, procedure
+* ttl (integer): used for cache-control in HTTP response (in seconds)
+* is_public (boolean): used for cache-control in HTTP response
+* hidden_fields (text[]): fields hidden from result sets
+* readonly_fields (text[]): fields that can be returned but not saved via inserts/updates
+* constants (jsonb): constant values set in middleware's context
+* context_mapped_headers (hstore): HTTP header values set in middleware's context
+* context_mapped_variables (text[]): route's parameters, excluding query string
+* context_mapped_cookies (jsonb): context variable imported from HTTP requests and exported as cookies in responses
+
+Column context_mapped_cookies can be set to NULL or must be a json array consisting of objects made of the following fields:
+* contextVariable (string): name of variable in the middleware's context
+* name (string): name of the cookie as seen by the browser
+* maxAge (number): lifetime of the cookie in seconds (set to 0 to disable)
+* subDomain (string): if non-null, sub-domain prepended to the domain name (the domain is set in the configuration file)
+* path (string): if non-null, path where cookie is applicable
+* secure (bool): true if this cookie is transmitted only over SSL/TLS, false otherwise
+* httpOnly (bool): true if this cookie is hidden from JavaScript, false otherwise
+* read (bool): true if this cookie is read from HTTP requests, false otherwise
+* write (bool): true if this cookie is returned in HTTP responses, false otherwise
 
 When the routes table is updated, a trigger sends a notification to pgasus which reload routes automatically. If you change columns of a relation, or arguments of a procedure, you may want to reload routes as well.
 
@@ -100,17 +113,6 @@ A simple URL may look like this:
 * `street,!streetnr` sorts by street name first, then by decreasing street number.
 * `10` limits the result to 10 records.
 
-#### Formats
-
-Three build-in data formats can be used to generate the content of the HTTP response:
-* `json` is the only format able to serialize any kind of result from the database.
-* `csv` is UTF-8 encoded, and will not serialize arrays and other composite data types.
-* `bin` is used to return result of a procedure as is. Text is UTF-8 encoded. Only scalar data types are supported.
-
-In addition, the configuration file may define several `binary_formats` sections. Those are used when format isn't one of the build-in formats. Each section must define two fields:
-* `extension` is the format as specified in the requested URL.
-* `mime_type` is the corresponding MIME type to be specified in the HTTP response's header.
-
 #### Composing requests to procedures
 
 When calling a procedure, the order of parameter is not important. Also, optional parameters remains optional.
@@ -121,9 +123,41 @@ Values loaded for each parameter are loaded in the following order:
 * URL query string for GET and DELETE methods. Keys found in query string are argument names, and values are formatted in JSON.
 * HTTP body for POST and PUT methods. See section below.
 
+URL must satisfy the following format:
+
+`/ROUTE.FORMAT?param1=VALUE&param2=VALUE&...`
+
+Values specified in the query string of a request to a procedure must be encoded in JSON using URL-encoding for special characters.
+
 A simple URL may look like this:
 
 `/tickets/create.json?kind="incident"&level=10&title="fire!"`
+
+#### Response formats
+
+Three build-in data formats can be used to generate the content of the HTTP response:
+* `json` is the only format able to serialize any kind of result from the database.
+* `csv` is UTF-8 encoded, and will not serialize arrays and other composite data types.
+* `bin` is used to return result of a procedure as is. Text is UTF-8 encoded. Only scalar data types are supported.
+
+In addition, the configuration file may define several `binary_formats` sections. Those are used when format isn't one of the build-in formats. Each section must define two fields:
+* `extension` is the format as specified in the requested URL.
+* `mime_type` is the corresponding MIME type to be specified in the HTTP response's header.
+
+#### Route variable formats
+
+Value specified in route (excluding query string) to relations and procedures must be encoded as following:
+
+| Parameter type | Format |
+| -------------- | ------ |
+| boolean | 't' or 'true' for true; 'f' or 'false' for false |
+| smallint, integer, bigint | decimal representation |
+| real, double precision | base 10 floating-point representation |
+| timestamp | RFC 3339 |
+| bytea | base64-encoded (for URLs) |
+| other | URL-encoded PostgreSQL text literal |
+
+JSON is not used in this case to give a more natural look to URLs.
 
 #### HTTP Body
 
