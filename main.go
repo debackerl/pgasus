@@ -63,6 +63,8 @@ var config struct {
 		LimitQueryName string
 	}
 	
+	DefaultContext map[string]string
+	
 	BinaryFormats []struct {
 		Extension string
 		MimeType string
@@ -122,6 +124,7 @@ func main() {
 	handler.FilterQueryName = config.Protocol.FilterQueryName
 	handler.SortQueryName = config.Protocol.SortQueryName
 	handler.LimitQueryName = config.Protocol.LimitQueryName
+	handler.DefaultContext = config.DefaultContext
 	
 	handler.BinaryFormats = make(map[string]string)
 	for _, x := range(config.BinaryFormats) {
