@@ -91,6 +91,7 @@ type RequestHandler struct {
 	LimitQueryName string
 	CookiesDomain string
 	CookiesPath string
+	DefaultContext map[string]string
 	BinaryFormats map[string]string
 	
 	db *pgx.ConnPool
@@ -477,7 +478,7 @@ func (h *RequestHandler) makeNonBatchRouteHandler(route *route) denco.HandlerFun
 			panic(err)
 		}
 		
-		context := makeContext(r, params, route.ContextInputCookies, route.ContextParameters, route.ContextHeaders)
+		context := makeContext(r, h.DefaultContext, params, route.ContextInputCookies, route.ContextParameters, route.ContextHeaders)
 		if err := setTxContext(tx, h.StatementTimeoutSecs, clientCn, h.ContextParameterName, context); err != nil {
 			panic(err)
 		}
@@ -561,7 +562,7 @@ func (h *RequestHandler) makeBatchRouteHandler(route *route) denco.HandlerFunc {
 			panic(err)
 		}
 		
-		context := makeContext(r, params, route.ContextInputCookies, route.ContextParameters, route.ContextHeaders)
+		context := makeContext(r, h.DefaultContext, params, route.ContextInputCookies, route.ContextParameters, route.ContextHeaders)
 		if err := setTxContext(tx, h.StatementTimeoutSecs, clientCn, h.ContextParameterName, context); err != nil {
 			panic(err)
 		}
@@ -683,7 +684,7 @@ func (h *RequestHandler) makeProcedureRouteHandler(route *route) denco.HandlerFu
 			panic(err)
 		}
 		
-		context := makeContext(r, params, route.ContextInputCookies, route.ContextParameters, route.ContextHeaders)
+		context := makeContext(r, h.DefaultContext, params, route.ContextInputCookies, route.ContextParameters, route.ContextHeaders)
 		if err := setTxContext(tx, h.StatementTimeoutSecs, clientCn, h.ContextParameterName, context); err != nil {
 			panic(err)
 		}
@@ -936,14 +937,18 @@ func parseQueryString(r *http.Request, globalQuery map[string]interface{}, filte
 }
 
 // compute variables of context based on HTTP request
-func makeContext(r *http.Request, params denco.Params, contextInputCookies map[string]*cookieConfig, contextParameters []string, contextHeaders pgx.NullHstore) map[string]string {
+func makeContext(r *http.Request, defaultContext map[string]string, params denco.Params, contextInputCookies map[string]*cookieConfig, contextParameters []string, contextHeaders pgx.NullHstore) map[string]string {
 	context := make(map[string]string)
+	
+	for k, v := range defaultContext {
+		context[k] = v
+	}
 	
 	if len(contextInputCookies) > 0 {
 		now := time.Now()
 		for _, cookie := range r.Cookies() {
 			if config, ok := contextInputCookies[cookie.Name]; ok {
-				if cookie.MaxAge >= 0 && (cookie.RawExpires == "" || cookie.Expires.After(now)) && (!config.HttpOnly || cookie.HttpOnly) {
+				if cookie.MaxAge >= 0 && (cookie.RawExpires == "" || cookie.Expires.After(now)) {
 					context[config.ContextVariable] = cookie.Value
 				}
 			}
