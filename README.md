@@ -31,12 +31,13 @@ A table stored in the database stores all routes made available by pgasus. The r
 * readonly_fields (text[]): fields that can be returned but not saved via inserts/updates
 * constants (jsonb): constant values set in middleware's context
 * context_mapped_headers (hstore): HTTP header values set in middleware's context
-* context_mapped_variables (text[]): route's parameters, excluding query string
+* context_mapped_variables (text[]): parameters of route to copy as variables in context, excluding query string
 * context_mapped_cookies (jsonb): context variable imported from HTTP requests and exported as cookies in responses
+* max_limit (integer): maximum number of records that can be requested when using a select statement
 
 Column context_mapped_cookies can be set to NULL or must be a json array consisting of objects made of the following fields:
-* contextVariable (string): name of variable in the middleware's context
 * name (string): name of the cookie as seen by the browser
+* contextVariable (string): name of variable in the middleware's context, same as "name" if contextVariable is left empty
 * maxAge (number): lifetime of the cookie in seconds (set to 0 to disable)
 * subDomain (string): if non-null, sub-domain prepended to the domain name (the domain is set in the configuration file)
 * path (string): if non-null, path where cookie is applicable
@@ -178,8 +179,10 @@ pgasus uses the notion of context when executing requests on the database. Postg
 All context variables will be put in the same namespace as specified in the configuration file to avoid conflicts with other parameters.
 
 The context is built in the following order:
-* Map HTTP header values accordingly to route's `context_mapped_headers` setting. A special header, X-Accept-Extension, is initialized by pgasus with file extension as specified in requested URL.
+* Load default context variables set in configuration file.
+* Load value of cookies defined in route's `context_mapped_cookies` setting where the read field was set to `true`.
 * Load variables defined in route's `context_mapped_variables` setting. Looking first in route's variables if found, otherwise in cookies. Overrides header.
+* Map HTTP header values accordingly to route's `context_mapped_headers` setting. A special header, X-Accept-Extension, is initialized by pgasus with file extension as specified in requested URL.
 
 #### Batch mode
 

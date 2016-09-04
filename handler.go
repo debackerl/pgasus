@@ -251,12 +251,16 @@ func (h *RequestHandler) createHandlers() error {
 	handlers := make([]denco.Handler, 0, len(routes))
 	
 	for _, r := range routes {
-		loadParametersTypes(tx, r)
-		
-		if r.ObjectType == "procedure" {
-			loadProc(tx, r)
+		if err := loadParametersTypes(tx, r); err != nil {
+			return err
 		}
-		
+
+		if r.ObjectType == "procedure" {
+			if err := loadProc(tx, r); err != nil {
+				return err
+			}
+		}
+
 		var jsonConstants *jason.Object
 		jsonConstants, err = jason.NewObjectFromBytes(r.RawConstants)
 		if err != nil {
@@ -388,20 +392,45 @@ func (h *RequestHandler) loadRoutes(tx *pgx.Tx, routesTableName string) ([]*rout
 	return routes, nil
 }
 
+func getRelationOid(tx *pgx.Tx, id string) (pgx.Oid, error) {
+	rows, err := tx.Query(`SELECT $1::regclass::oid`, id)
+	if err != nil {
+		return -1, err
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		return -1, errors.New("Could not find relation " + id)
+	}
+	
+	var oid pgx.Oid
+	if err = rows.Scan(&oid); err != nil {
+		return -1, err
+	}
+	
+	return oid, nil
+}
+
 // loads types of relation columns or procedure arguments from PostgreSQL for given route
 func loadParametersTypes(tx *pgx.Tx, route *route) error {
 	// for base types, use attribute's type, for domains, use underlying type, otherwise use text
-	var sql string
+	var rows *pgx.Rows
+	var err error
 	switch route.ObjectType {
 	case "relation":
-		sql = `SELECT att.attname, (CASE typ.typtype WHEN 'b' THEN att.atttypid WHEN 'd' THEN typ.typbasetype ELSE 25 END)::regtype FROM pg_attribute att INNER JOIN pg_type typ ON att.atttypid = typ.oid WHERE att.attrelid = $1::regclass::oid AND att.attisdropped = false AND att.attnum > 0`
+		oid, err := getRelationOid(tx, route.ObjectName)
+		if err != nil {
+			return err
+		}
+		sql := `SELECT att.attname, (CASE typ.typtype WHEN 'b' THEN att.atttypid WHEN 'd' THEN typ.typbasetype ELSE 25 END)::regtype FROM pg_attribute att INNER JOIN pg_type typ ON att.atttypid = typ.oid WHERE att.attrelid = $1 AND att.attisdropped = false AND att.attnum > 0`
+		rows, err = tx.Query(sql, oid)
 	case "procedure":
-		sql = `SELECT args.name, (CASE typ.typtype WHEN 'b' THEN args.type WHEN 'd' THEN typ.typbasetype ELSE 25 END)::regtype FROM (SELECT unnest.* FROM pg_proc, unnest(pg_proc.proargnames, pg_proc.proargtypes::int[]) WHERE pg_proc.proname = $1) AS args(name, type) INNER JOIN pg_type typ ON args.type = typ.oid`
+		sql := `SELECT args.name, (CASE typ.typtype WHEN 'b' THEN args.type WHEN 'd' THEN typ.typbasetype ELSE 25 END)::regtype FROM (SELECT unnest.* FROM pg_proc, unnest(pg_proc.proargnames, pg_proc.proargtypes::int[]) WHERE pg_proc.proname = $1) AS args(name, type) INNER JOIN pg_type typ ON args.type = typ.oid`
+		rows, err = tx.Query(sql, route.ObjectName)
 	default:
 		return errors.New("Unknown object type: " + route.ObjectType)
 	}
 	
-	rows, err := tx.Query(sql, route.ObjectName)
 	if err != nil {
 		return err
 	}
@@ -428,7 +457,7 @@ func loadParametersTypes(tx *pgx.Tx, route *route) error {
 	}
 	
 	route.Columns = strings.Join(fieldsLeft, ",")
-	
+
 	return nil
 }
 
@@ -445,7 +474,7 @@ func loadProc(tx *pgx.Tx, route *route) error {
 			return err
 		}
 	} else {
-		return errors.New("Procedure could not be found: " + route.ObjectName)
+		return errors.New("Could not find procedure " + route.ObjectName)
 	}
 	
 	return nil
@@ -948,7 +977,7 @@ func makeContext(r *http.Request, defaultContext map[string]string, params denco
 		now := time.Now()
 		for _, cookie := range r.Cookies() {
 			if config, ok := contextInputCookies[cookie.Name]; ok {
-				if cookie.MaxAge >= 0 && (cookie.RawExpires == "" || cookie.Expires.After(now)) {
+				if cookie.MaxAge >= 0 && (cookie.RawExpires == "" || cookie.Expires.After(now)) && (!config.HttpOnly || cookie.HttpOnly) {
 					context[config.ContextVariable] = cookie.Value
 				}
 			}
