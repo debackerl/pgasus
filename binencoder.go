@@ -79,57 +79,31 @@ func (w *BinRecordSetWriter) Null(rs *RecordSet) error {
 }
 
 func (w *BinRecordSetWriter) Bool(rs *RecordSet, v bool) error {
-	if w.Len() > 0 {
-		return errors.New("Binary format may contain only one scalar value.")
-	}
-	
 	if v {
-		w.WriteString("true")
+		return w.String(rs, "true")
 	} else {
-		w.WriteString("false")
+		return w.String(rs, "false")
 	}
-	
-	return w.checkSize()
 }
 
 func (w *BinRecordSetWriter) Integer(rs *RecordSet, v int64) error {
-	if w.Len() > 0 {
-		return errors.New("Binary format may contain only one scalar value.")
-	}
-	
-	w.WriteString(strconv.FormatInt(v, 10))
-	
-	return w.checkSize()
+	return w.String(rs, strconv.FormatInt(v, 10))
 }
 
 func (w *BinRecordSetWriter) Float(rs *RecordSet, v float64) error {
-	if w.Len() > 0 {
-		return errors.New("Binary format may contain only one scalar value.")
-	}
-	
-	w.WriteString(strconv.FormatFloat(v, 'g', -1, 64))
-	
-	return w.checkSize()
+	return w.String(rs, strconv.FormatFloat(v, 'g', -1, 64))
 }
 
 func (w *BinRecordSetWriter) Numeric(rs *RecordSet, v string) error {
-	if w.Len() > 0 {
-		return errors.New("Binary format may contain only one scalar value.")
-	}
-	
-	w.WriteString(v)
-	
-	return w.checkSize()
+	return w.String(rs, v)
 }
 
-func (w *BinRecordSetWriter) Time(rs *RecordSet, v time.Time) error {
-	if w.Len() > 0 {
-		return errors.New("Binary format may contain only one scalar value.")
-	}
-	
-	w.WriteString(v.Format(time.RFC3339))
-	
-	return w.checkSize()
+func (w *BinRecordSetWriter) Date(rs *RecordSet, v time.Time) error {
+	return w.String(rs, v.Format("2006-01-02"))
+}
+
+func (w *BinRecordSetWriter) DateTime(rs *RecordSet, v time.Time) error {
+	return w.String(rs, v.Format(time.RFC3339))
 }
 
 func (w *BinRecordSetWriter) String(rs *RecordSet, v string) error {
@@ -153,13 +127,7 @@ func (w *BinRecordSetWriter) Bytes(rs *RecordSet, v []byte) error {
 }
 
 func (w *BinRecordSetWriter) Json(rs *RecordSet, v json.RawMessage) error {
-	if w.Len() > 0 {
-		return errors.New("Binary format may contain only one scalar value.")
-	}
-	
-	w.String(rs, string(v))
-	
-	return w.checkSize()
+	return w.String(rs, string(v))
 }
 
 func (w *BinRecordSetWriter) checkSize() error {

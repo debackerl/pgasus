@@ -151,7 +151,17 @@ func (w *JsonRecordSetWriter) Numeric(rs *RecordSet, v string) error {
 	return w.checkSize()
 }
 
-func (w *JsonRecordSetWriter) Time(rs *RecordSet, v time.Time) error {
+func (w *JsonRecordSetWriter) Date(rs *RecordSet, v time.Time) error {
+	w.prepare()
+	
+	w.WriteByte('"')
+	w.WriteString(v.Format("2006-01-02"))
+	w.WriteByte('"')
+	
+	return w.checkSize()
+}
+
+func (w *JsonRecordSetWriter) DateTime(rs *RecordSet, v time.Time) error {
 	w.prepare()
 	
 	w.WriteByte('"')

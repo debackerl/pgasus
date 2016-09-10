@@ -1,6 +1,6 @@
 # pgasus
 
-## PostgreSQL API Server for Universal Stack
+## The REST interface to PostgreSQL
 
 This software is of beta quality at the moment. Expect production quality by end of 2015.
 

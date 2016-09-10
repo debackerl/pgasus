@@ -50,13 +50,14 @@ type route struct {
 	Proretset bool // procedures only, true if it returns a set, false otherwise
 	Provolatile string // procedures only, "i" for immutable, "s" for stable, "v" for volatile
 	Prorettyptype string // procedures only
+	Proretoid pgx.Oid // procedures only
 	Columns string // relations only
 	ContextInputCookies map[string]*cookieConfig // cookies to get from HTTP requests
 	ContextOutputCookies []*cookieConfig // cookies to set in HTTP responses
 }
 
 type cookieConfig struct {
-	ContextVariable string `json:"contextVariable"` // name of context variable to read from PostgreSQL's session
+	ContextVariable NullString `json:"contextVariable"` // name of context variable to read from PostgreSQL's session
 	Name string `json:"name"` // cookie's name
 	MaxAge int `json:"maxAge"` // cookie expires after this many seconds, set to 0 to disable expiration
 	SubDomain NullString `json:"subDomain"` // the subdomain is prepended to the domain specified in the configuration file, null values disable this option
@@ -370,6 +371,11 @@ func (h *RequestHandler) loadRoutes(tx *pgx.Tx, routesTableName string) ([]*rout
 					r.ContextOutputCookies = append(r.ContextOutputCookies, cookie)
 				}
 				
+				if !cookie.ContextVariable.Valid || cookie.ContextVariable.String == "" {
+					cookie.ContextVariable.Valid = true
+					cookie.ContextVariable.String = cookie.Name
+				}
+				
 				if cookie.SubDomain.Valid {
 					cookie.SubDomain.String = strings.Join([]string{cookie.SubDomain.String, h.CookiesDomain}, ".")
 				} else if h.CookiesDomain != "" {
@@ -463,14 +469,14 @@ func loadParametersTypes(tx *pgx.Tx, route *route) error {
 
 // loads details of a procedure from PostgreSQL for given route
 func loadProc(tx *pgx.Tx, route *route) error {
-	rows, err := tx.Query(`SELECT pro.proretset, pro.provolatile, typ.typtype FROM pg_proc pro INNER JOIN pg_type typ ON pro.prorettype = typ.oid WHERE pro.proname = $1`, route.ObjectName)
+	rows, err := tx.Query(`SELECT pro.proretset, pro.provolatile, typ.typtype, typ.oid FROM pg_proc pro INNER JOIN pg_type typ ON pro.prorettype = typ.oid WHERE pro.proname = $1`, route.ObjectName)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	
 	if rows.Next() {
-		if err := rows.Scan(&route.Proretset, &route.Provolatile, &route.Prorettyptype); err != nil {
+		if err := rows.Scan(&route.Proretset, &route.Provolatile, &route.Prorettyptype, &route.Proretoid); err != nil {
 			return err
 		}
 	} else {
@@ -655,7 +661,7 @@ func (h *RequestHandler) makeBatchRouteHandler(route *route) denco.HandlerFunc {
 func processPostQuery(h *RequestHandler, route *route, tx *pgx.Tx, responder RecordSetHttpResponder, query map[string]interface{}) {
 	sql := NewSqlBuilder()
 	
-	if err := buildInsertSqlQuery(&sql, h.FtsFunctionName, route.ParametersTypes, route.ObjectName, query); err != nil {
+	if err := buildInsertSqlQuery(&sql, h.FtsFunctionName, route.ParametersTypes, route.Columns, route.ObjectName, query); err != nil {
 		panic(err)
 	}
 	
@@ -750,8 +756,9 @@ func (h *RequestHandler) makeProcedureRouteHandler(route *route) denco.HandlerFu
 // makes one procedure call
 func processProcedureQuery(route *route, tx *pgx.Tx, responder RecordSetHttpResponder, query map[string]interface{}) {
 	sql := NewSqlBuilder()
-	// if returned type is a composite type, then we also send a SELECT * FROM
-	if err := buildProcedureSqlQuery(&sql, route.ObjectName, route.Proretset || route.Prorettyptype == "c", query); err != nil {
+	// if returned type is a composite type or a setof, then we also send a SELECT * FROM
+	// if returned type is 'record', then we jsonize using row_to_json
+	if err := buildProcedureSqlQuery(&sql, route.ObjectName, route.Prorettyptype == "c" || route.Proretset, route.Proretoid == pgx.RecordOid, query); err != nil {
 		panic(err)
 	}
 	
@@ -847,6 +854,8 @@ func (h *RequestHandler) getResponder(r *http.Request, maxResponseSizeKbytes int
 	switch accept {
 	case "json":
 		return NewJsonRecordSetWriter(maxResponseSizeKbytes), nil
+	case "xlsx":
+		return NewXlsxRecordSetWriter(maxResponseSizeKbytes << 10), nil
 	case "csv":
 		return &CsvRecordSetWriter{MaxResponseSizeBytes: maxResponseSizeKbytes << 10}, nil
 	case "bin":
@@ -978,7 +987,7 @@ func makeContext(r *http.Request, defaultContext map[string]string, params denco
 		for _, cookie := range r.Cookies() {
 			if config, ok := contextInputCookies[cookie.Name]; ok {
 				if cookie.MaxAge >= 0 && (cookie.RawExpires == "" || cookie.Expires.After(now)) && (!config.HttpOnly || cookie.HttpOnly) {
-					context[config.ContextVariable] = cookie.Value
+					context[config.ContextVariable.String] = cookie.Value
 				}
 			}
 		}
@@ -1064,7 +1073,7 @@ func setCookies(w http.ResponseWriter, tx *pgx.Tx, sessionParameter string, cont
 			builder.WriteSql(",")
 		}
 		builder.WriteSql("(")
-		builder.WriteValue(sessionParameter + "." + config.ContextVariable)
+		builder.WriteValue(sessionParameter + "." + config.ContextVariable.String)
 		builder.WriteSql(")")
 	}
 	builder.WriteSql(") xs(name)")
@@ -1091,7 +1100,7 @@ func setCookies(w http.ResponseWriter, tx *pgx.Tx, sessionParameter string, cont
 	}
 	
 	for _, config := range contextOutputCookies {
-		if value, found := values[config.ContextVariable]; found {
+		if value, found := values[config.ContextVariable.String]; found {
 			var cookie http.Cookie
 			
 			cookie.Name = config.Name

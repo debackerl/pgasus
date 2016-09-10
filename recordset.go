@@ -125,7 +125,8 @@ type RecordSetVisitor interface {
 	Integer(rs *RecordSet, v int64) error
 	Float(rs *RecordSet, v float64) error
 	Numeric(rs *RecordSet, v string) error
-	Time(rs *RecordSet, v time.Time) error
+	Date(rs *RecordSet, v time.Time) error
+	DateTime(rs *RecordSet, v time.Time) error
 	String(rs *RecordSet, v string) error
 	Bytes(rs *RecordSet, v []byte) error
 	Json(rs *RecordSet, v json.RawMessage) error
@@ -382,7 +383,7 @@ func (rs *RecordSet) decodeTimestamp(vr *pgx.ValueReader) error {
 
 	microsecSinceY2K := vr.ReadInt64()
 	microsecSinceUnixEpoch := microsecFromUnixEpochToY2K + microsecSinceY2K
-	return rs.Visitor.Time(rs, time.Unix(microsecSinceUnixEpoch/1000000, (microsecSinceUnixEpoch%1000000)*1000))
+	return rs.Visitor.DateTime(rs, time.Unix(microsecSinceUnixEpoch/1000000, (microsecSinceUnixEpoch%1000000)*1000))
 }
 
 func (rs *RecordSet) decodeDate(vr *pgx.ValueReader) error {
@@ -390,7 +391,7 @@ func (rs *RecordSet) decodeDate(vr *pgx.ValueReader) error {
 		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a date: %d", vr.Len()))
 	}
 	dayOffset := vr.ReadInt32()
-	return rs.Visitor.Time(rs, time.Date(2000, 1, int(1+dayOffset), 0, 0, 0, 0, time.Local))
+	return rs.Visitor.Date(rs, time.Date(2000, 1, int(1+dayOffset), 0, 0, 0, 0, time.Local))
 }
 
 func (rs *RecordSet) decode1dArrayHeader(vr *pgx.ValueReader) (length int32, err error) {

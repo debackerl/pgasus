@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"github.com/debackerl/queryme/go"
 )
 
@@ -28,7 +29,7 @@ func buildSelectSqlQuery(sql *SqlBuilder, ftsFunction string, argumentsType map[
 	return nil
 }
 
-func buildInsertSqlQuery(sql *SqlBuilder, ftsFunction string, argumentsType map[string]string, relation string, query map[string]interface{}) error {
+func buildInsertSqlQuery(sql *SqlBuilder, ftsFunction string, argumentsType map[string]string, columns string, relation string, query map[string]interface{}) error {
 	sql.WriteSql("INSERT INTO ")
 	sql.WriteId(relation)
 	
@@ -60,7 +61,8 @@ func buildInsertSqlQuery(sql *SqlBuilder, ftsFunction string, argumentsType map[
 		i++
 	}
 	
-	sql.WriteSql(" RETURNING *")
+	sql.WriteSql(" RETURNING ")
+	sql.WriteSql(columns)
 	
 	return nil
 }
@@ -107,9 +109,16 @@ func buildDeleteSqlQuery(sql *SqlBuilder, ftsFunction string, argumentsType map[
 	return nil
 }
 
-func buildProcedureSqlQuery(sql *SqlBuilder, procedure string, proretset bool, query map[string]interface{}) error {
+func buildProcedureSqlQuery(sql *SqlBuilder, procedure string, proretset bool, jsonize bool, query map[string]interface{}) error {
 	if proretset {
-		sql.WriteSql("SELECT * FROM ")
+		if jsonize {
+			// ERROR: a column definition list is required for functions returning "record"
+			return errors.New("Procedures returning setof records are not supported.")
+		} else {
+			sql.WriteSql("SELECT * FROM ")
+		}
+	} else if jsonize {
+		sql.WriteSql("SELECT row_to_json(")
 	} else {
 		sql.WriteSql("SELECT ")
 	}
@@ -134,6 +143,10 @@ func buildProcedureSqlQuery(sql *SqlBuilder, procedure string, proretset bool, q
 	}
 	
 	sql.WriteSql(")")
+	
+	if jsonize {
+		sql.WriteSql(")")
+	}
 	
 	return nil
 }

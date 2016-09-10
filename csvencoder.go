@@ -15,7 +15,7 @@ import (
 type CsvRecordSetWriter struct {
 	bytes.Buffer
 	MaxResponseSizeBytes int64
-	first bool
+	firstColumn bool
 	depth int
 }
 
@@ -38,14 +38,7 @@ func (w *CsvRecordSetWriter) EndBatch() error {
 }
 
 func (w *CsvRecordSetWriter) BeginRecordSet(rs *RecordSet) error {
-	names := make([]string, 0, 8)
-	for _, col := range rs.Columns {
-		names = append(names, `"` + strings.Replace(col.Name, `"`, `""`, -1) + `"`)
-	}
-	
-	w.WriteString(strings.Join(names, ","))
-	
-	return w.checkSize()
+	return nil
 }
 
 func (w *CsvRecordSetWriter) EndRecordSet(rs *RecordSet) error {
@@ -53,8 +46,20 @@ func (w *CsvRecordSetWriter) EndRecordSet(rs *RecordSet) error {
 }
 
 func (w *CsvRecordSetWriter) BeginRecord(rs *RecordSet) error {
+	if w.Len() == 0 {
+		// we don't place the following in BeginRecordSet because we still want
+		// columns header for results with single row (whence BeginRecordSet is called)
+		
+		names := make([]string, 0, 8)
+		for _, col := range rs.Columns {
+			names = append(names, `"` + strings.Replace(col.Name, `"`, `""`, -1) + `"`)
+		}
+		
+		w.WriteString(strings.Join(names, ","))
+	}
+	
 	w.WriteString("\r\n")
-	w.first = true
+	w.firstColumn = true
 	
 	return w.checkSize()
 }
@@ -64,8 +69,8 @@ func (w *CsvRecordSetWriter) EndRecord(rs *RecordSet) error {
 }
 
 func (w *CsvRecordSetWriter) BeginColumn(rs *RecordSet) error {
-	if w.first {
-		w.first = false
+	if w.firstColumn {
+		w.firstColumn = false
 	} else {
 		w.WriteByte(',')
 	}
@@ -152,7 +157,17 @@ func (w *CsvRecordSetWriter) Numeric(rs *RecordSet, v string) error {
 	return w.checkSize()
 }
 
-func (w *CsvRecordSetWriter) Time(rs *RecordSet, v time.Time) error {
+func (w *CsvRecordSetWriter) Date(rs *RecordSet, v time.Time) error {
+	if w.depth > 0 {
+		return nil
+	}
+	
+	w.WriteString(v.Format("2006-01-02"))
+	
+	return w.checkSize()
+}
+
+func (w *CsvRecordSetWriter) DateTime(rs *RecordSet, v time.Time) error {
 	if w.depth > 0 {
 		return nil
 	}
