@@ -237,7 +237,7 @@ func loadObject(tx *pgx.Tx, route *Route) error {
 
 // loads details of a procedure from PostgreSQL for given route
 func loadProc(tx *pgx.Tx, route *Route) error {
-	rows, err := tx.Query(`SELECT pro.proretset, pro.provolatile, typ.typtype, typ.typname, typ.oid, pro.proargnames[pro.pronargs-pro.pronargdefaults+1:] FROM pg_proc pro INNER JOIN pg_type typ ON pro.prorettype = typ.oid WHERE pro.proname = $1`, route.ObjectName)
+	rows, err := tx.Query(`SELECT pro.proretset, pro.provolatile, typ.typtype, typ.typname, typ.oid, pro.proargnames[(pro.pronargs-pro.pronargdefaults+1):pro.pronargs] FROM pg_proc pro INNER JOIN pg_type typ ON pro.prorettype = typ.oid WHERE pro.proname = $1`, route.ObjectName)
 	if err != nil {
 		return err
 	}
