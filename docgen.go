@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -57,6 +58,23 @@ func (g *DocumentationGenerator) GenerateDocumentation(outputPath string) {
 	wtr.WriteString("## Routes\r\n\r\n")
 	
 	for _, route := range routes {
+		optionals := make(map[string]struct{})
+		for _, name := range route.OptionalArguments {
+			optionals[name] = struct{}{}
+		}
+		
+		routeArguments := make(map[string]string)
+		for _, name := range routeParser.FindAllString(route.UrlPath, -1) {
+			name = name[2:]
+			
+			typ := "text"
+			if t, ok := route.ParametersTypes[name]; ok {
+				typ = t
+			}
+			
+			routeArguments[name] = strings.TrimSuffix(typ, "[]")
+		}
+		
 		wtr.WriteString("### ")
 		wtr.WriteString(route.Method)
 		wtr.WriteString(" `")
@@ -81,27 +99,27 @@ func (g *DocumentationGenerator) GenerateDocumentation(outputPath string) {
 		table.SetBorders(tblBorders)
 		table.SetCenterSeparator("|")
 		table.SetHeader([]string{"Name", "Type", "Optional"})
-		switch route.ObjectType {
-		case "relation":
-			for _, name := range routeParser.FindAllString(route.UrlPath, -1) {
-				name = name[2:]
-				typ := "text"
-				if t, ok := route.ParametersTypes[name]; ok {
-					typ = t
-				}
-				table.Append([]string{"`" + name + "`", "`" + strings.TrimSuffix(typ, "[]") + "`", "false"})
-			}
-			
-		case "procedure":
-			optionals := make(map[string]struct{})
-			for _, name := range route.OptionalArguments {
-				optionals[name] = struct{}{}
-			}
-			
+		rows := make(Rows, 0, 8)
+		for name, typ := range routeArguments {
+			rows.Append([]string{"`" + name + "`", "`" + typ + "`", "false"})
+		}
+		if route.ObjectType == "procedure" || route.Method == "post" || route.Method == "put" {
 			for name, typ := range route.ParametersTypes {
-				table.Append([]string{"`" + name + "`", "`" + typ + "`", fmt.Sprintf("%t", IsStringInMap(name, optionals))})
+				isoptional := IsStringInMap(name, optionals)
+				isro := IsStringInMap(name, route.ReadOnlyFields)
+				_, isroutearg := routeArguments[name]
+				
+				if isro {
+					if route.Method == "post" && !isoptional && !isroutearg {
+						log.Fatalf("Route has read-only field without default value, route_id %d, field %s\n", route.RouteID, name)
+					}
+				} else if !isroutearg {
+					rows.Append([]string{"`" + name + "`", "`" + typ + "`", fmt.Sprintf("%t", isoptional)})
+				}
 			}
 		}
+		sort.Sort(rows)
+		table.AppendBulk(rows)
 		table.Render()
 		
 		wtr.WriteString("\r\n**Result**\r\n\r\n")
@@ -112,11 +130,14 @@ func (g *DocumentationGenerator) GenerateDocumentation(outputPath string) {
 			table.SetBorders(tblBorders)
 			table.SetCenterSeparator("|")
 			table.SetHeader([]string{"Name", "Type"})
+			rows = make(Rows, 0, 8)
 			for name, typ := range route.ParametersTypes {
 				if _, ok := route.HiddenFields[name]; !ok {
-					table.Append([]string{"`" + name + "`", "`" + typ + "`"})
+					rows.Append([]string{"`" + name + "`", "`" + typ + "`"})
 				}
 			}
+			sort.Sort(rows)
+			table.AppendBulk(rows)
 			table.Render()
 			
 		case "procedure":
@@ -146,6 +167,7 @@ func (g *DocumentationGenerator) GenerateDocumentation(outputPath string) {
 			table.SetBorders(tblBorders)
 			table.SetCenterSeparator("|")
 			table.SetHeader([]string{"Name", "Read/Write", "Domain", "Path", "HTTP Only", "Secure", "Max Age"})
+			rows = make(Rows, 0, 8)
 			for _, cookie := range route.AllCookies {
 				rw := ""
 				if cookie.Read { rw += "R" }
@@ -161,8 +183,10 @@ func (g *DocumentationGenerator) GenerateDocumentation(outputPath string) {
 					maxAge = fmt.Sprintf("%d sec", cookie.MaxAge)
 				}
 				
-				table.Append([]string{cookie.Name, rw, cookie.SubDomain.String, cookie.Path.String, httpOnly, secure, maxAge})
+				rows.Append([]string{cookie.Name, rw, cookie.SubDomain.String, cookie.Path.String, httpOnly, secure, maxAge})
 			}
+			sort.Sort(rows)
+			table.AppendBulk(rows)
 			table.Render()
 		}
 		
@@ -173,4 +197,22 @@ func (g *DocumentationGenerator) GenerateDocumentation(outputPath string) {
 func IsStringInMap(x string, xs map[string]struct{}) bool {
 	_, ok := xs[x]
 	return ok
+}
+
+type Rows [][]string
+
+func (rs *Rows) Append(fields []string) {
+	*rs = append(*rs, fields)
+}
+
+func (rs Rows) Len() int {
+	return len(rs)
+}
+
+func (rs Rows) Swap(i, j int) {
+	rs[i], rs[j] = rs[j], rs[i]
+}
+
+func (rs Rows) Less(i, j int) bool {
+	return rs[i][0] < rs[j][0]
 }

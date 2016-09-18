@@ -188,14 +188,14 @@ func loadObject(tx *pgx.Tx, route *Route) error {
 		if err != nil {
 			return err
 		}
-		sql := `SELECT att.attname, (CASE typ.typtype WHEN 'b' THEN att.atttypid WHEN 'd' THEN typ.typbasetype ELSE 25 END)::regtype FROM pg_attribute att INNER JOIN pg_type typ ON att.atttypid = typ.oid WHERE att.attrelid = $1 AND att.attisdropped = false AND att.attnum > 0`
+		sql := `SELECT att.attname, (CASE typ.typtype WHEN 'b' THEN att.atttypid WHEN 'd' THEN typ.typbasetype ELSE 25 END)::regtype, att.atthasdef OR NOT att.attnotnull FROM pg_attribute att INNER JOIN pg_type typ ON att.atttypid = typ.oid WHERE att.attrelid = $1 AND att.attisdropped = false AND att.attnum > 0`
 		rows, err = tx.Query(sql, oid)
 	case "procedure":
 		oid, err = getProcedureOid(tx, route.ObjectName)
 		if err != nil {
 			return err
 		}
-		sql := `SELECT args.name, (CASE typ.typtype WHEN 'b' THEN args.type WHEN 'd' THEN typ.typbasetype ELSE 25 END)::regtype FROM (SELECT unnest.* FROM pg_proc, unnest(pg_proc.proargnames, pg_proc.proargtypes::int[]) WHERE pg_proc.oid = $1) AS args(name, type) INNER JOIN pg_type typ ON args.type = typ.oid`
+		sql := `SELECT args.name, (CASE typ.typtype WHEN 'b' THEN args.type WHEN 'd' THEN typ.typbasetype ELSE 25 END)::regtype, isoptional FROM (SELECT (row_number() OVER ()) BETWEEN (pg_proc.pronargs-pg_proc.pronargdefaults+1) AND pg_proc.pronargs, unnest.* FROM pg_proc, unnest(pg_proc.proargnames, pg_proc.proargtypes::int[]) WHERE pg_proc.oid = $1) AS args(isoptional, name, type) INNER JOIN pg_type typ ON args.type = typ.oid`
 		rows, err = tx.Query(sql, oid)
 	default:
 		return errors.New("Unknown object type: " + route.ObjectType)
@@ -208,10 +208,12 @@ func loadObject(tx *pgx.Tx, route *Route) error {
 	
 	route.ParametersTypes = make(map[string]string)
 	fieldsLeft := make([]string, 0, 16)
+	optionalArguments := make([]string, 0, 16)
 	
 	for rows.Next() {
 		var name, typ pgx.NullString
-		if err := rows.Scan(&name, &typ); err != nil {
+		var isoptional bool
+		if err := rows.Scan(&name, &typ, &isoptional); err != nil {
 			return err
 		}
 		
@@ -222,11 +224,20 @@ func loadObject(tx *pgx.Tx, route *Route) error {
 				if _, ok := route.HiddenFields[name.String]; !ok {
 					fieldsLeft = append(fieldsLeft, quoteIdentifier(name.String))
 				}
+				
+				if route.Method != "post" {
+					isoptional = true
+				}
+			}
+			
+			if isoptional {
+				optionalArguments = append(optionalArguments, name.String)
 			}
 		}
 	}
 	
 	route.SelectedColumns = strings.Join(fieldsLeft, ",")
+	route.OptionalArguments = optionalArguments
 	
 	if route.Description, err = getDescription(tx, oid); err != nil {
 		return err
@@ -237,14 +248,14 @@ func loadObject(tx *pgx.Tx, route *Route) error {
 
 // loads details of a procedure from PostgreSQL for given route
 func loadProc(tx *pgx.Tx, route *Route) error {
-	rows, err := tx.Query(`SELECT pro.proretset, pro.provolatile, typ.typtype, typ.typname, typ.oid, pro.proargnames[(pro.pronargs-pro.pronargdefaults+1):pro.pronargs] FROM pg_proc pro INNER JOIN pg_type typ ON pro.prorettype = typ.oid WHERE pro.proname = $1`, route.ObjectName)
+	rows, err := tx.Query(`SELECT pro.proretset, pro.provolatile, typ.typtype, typ.typname, typ.oid FROM pg_proc pro INNER JOIN pg_type typ ON pro.prorettype = typ.oid WHERE pro.proname = $1`, route.ObjectName)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	
 	if rows.Next() {
-		if err := rows.Scan(&route.Proretset, &route.Provolatile, &route.Prorettyptype, &route.Prorettypname, &route.Proretoid, &route.OptionalArguments); err != nil {
+		if err := rows.Scan(&route.Proretset, &route.Provolatile, &route.Prorettyptype, &route.Prorettypname, &route.Proretoid); err != nil {
 			return err
 		}
 	} else {
