@@ -21,9 +21,9 @@ type JsonRecordSetWriter struct {
 	stack []StateFunction
 }
 
-func NewJsonRecordSetWriter(maxResponseSizeKbytes int64) *JsonRecordSetWriter {
+func NewJsonRecordSetWriter(maxResponseSizeBytes int64) *JsonRecordSetWriter {
 	return &JsonRecordSetWriter {
-		MaxResponseSizeBytes: maxResponseSizeKbytes << 10,
+		MaxResponseSizeBytes: maxResponseSizeBytes,
 		stack: make([]StateFunction, 0, 4),
 	}
 }

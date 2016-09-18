@@ -138,7 +138,8 @@ A simple URL may look like this:
 
 Three build-in data formats can be used to generate the content of the HTTP response:
 * `json` is the only format able to serialize any kind of result from the database.
-* `csv` is UTF-8 encoded, and will not serialize arrays and other composite data types.
+* `xlsx` serializes each record set as a sheet. Arrays and other composite data types in relations (tables and views) won't be serialized. However, procedures returning composite types or setof values are supported. Procedures returning a bytea value are expected to return a xlsx file.
+* `csv` is UTF-8 encoded, comma separated. Strings are double-quoted. Arrays and other composite data types in relations (tables and views) won't be serialized. Procedures returning composite types or setof values are supported. Procedures returning a text or varchar value are expected to return a csv file.
 * `bin` is used to return result of a procedure as is. Text is UTF-8 encoded. Only scalar data types are supported.
 
 In addition, the configuration file may define several `binary_formats` sections. Those are used when format isn't one of the build-in formats. Each section must define two fields:
@@ -149,14 +150,14 @@ In addition, the configuration file may define several `binary_formats` sections
 
 Value specified in route (excluding query string) to relations and procedures must be encoded as following:
 
-| Parameter type | Format |
-| -------------- | ------ |
-| boolean | 't' or 'true' for true; 'f' or 'false' for false |
-| smallint, integer, bigint | decimal representation |
-| real, double precision | base 10 floating-point representation |
-| timestamp | RFC 3339 |
-| bytea | base64-encoded (for URLs) |
-| other | URL-encoded PostgreSQL text literal |
+| Parameter type            | Format                                           |
+| ------------------------- | ------------------------------------------------ |
+| boolean                   | 't' or 'true' for true; 'f' or 'false' for false |
+| smallint, integer, bigint | decimal representation                           |
+| real, double precision    | base 10 floating-point representation            |
+| timestamp                 | RFC 3339                                         |
+| bytea                     | base64-encoded (for URLs)                        |
+| other                     | URL-encoded PostgreSQL text literal              |
 
 JSON is not used in this case to give a more natural look to URLs.
 

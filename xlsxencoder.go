@@ -12,6 +12,8 @@ import (
 	"github.com/tealeg/xlsx"
 )
 
+const XlsxMimeType string = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
 type XlsxRecordSetWriter struct {
 	MaxResponseSizeBytes int64
 	deflatedSize int64
@@ -40,7 +42,7 @@ func (w *XlsxRecordSetWriter) ToBytes() (bs []byte, err error) {
 }
 
 func (w *XlsxRecordSetWriter) HttpRespond(hw http.ResponseWriter) {
-	hw.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	hw.Header().Set("Content-Type", XlsxMimeType)
 	hw.WriteHeader(http.StatusOK)
 	bytes, err := w.ToBytes()
 	if err != nil {

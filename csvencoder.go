@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+const CsvMimeType string = "text/csv; charset=utf-8"
+
 type CsvRecordSetWriter struct {
 	bytes.Buffer
 	MaxResponseSizeBytes int64
@@ -24,7 +26,7 @@ func (w *CsvRecordSetWriter) ToBytes() []byte {
 }
 
 func (w *CsvRecordSetWriter) HttpRespond(hw http.ResponseWriter) {
-	hw.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	hw.Header().Set("Content-Type", CsvMimeType)
 	hw.WriteHeader(http.StatusOK)
 	hw.Write(w.ToBytes())
 }

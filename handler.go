@@ -119,6 +119,7 @@ func (s *NullString) UnmarshalJSON(raw []byte) error {
 func (h *RequestHandler) OpenRequestsLogFile(path string) error {
 	var err error
 	if path == "-" {
+		// TODO: this is UNIX only
 		path = "/dev/stdout"
 	}
 	h.reqLogFile, err = os.OpenFile(path, os.O_WRONLY | os.O_APPEND | os.O_CREATE, 0666)
@@ -497,7 +498,7 @@ func (h *RequestHandler) makeNonBatchRouteHandler(route *route) denco.HandlerFun
 			panic(err)
 		}
 		
-		responder, err := h.getResponder(r, h.MaxResponseSizeKbytes)
+		responder, err := h.getResponder(r, h.MaxResponseSizeKbytes, route)
 		if err != nil {
 			panic(err)
 		}
@@ -581,7 +582,7 @@ func (h *RequestHandler) makeBatchRouteHandler(route *route) denco.HandlerFunc {
 			panic(err)
 		}
 		
-		responder, err := h.getResponder(r, h.MaxResponseSizeKbytes)
+		responder, err := h.getResponder(r, h.MaxResponseSizeKbytes, route)
 		if err != nil {
 			panic(err)
 		}
@@ -703,7 +704,7 @@ func (h *RequestHandler) makeProcedureRouteHandler(route *route) denco.HandlerFu
 			}
 		}
 		
-		responder, err := h.getResponder(r, h.MaxResponseSizeKbytes)
+		responder, err := h.getResponder(r, h.MaxResponseSizeKbytes, route)
 		if err != nil {
 			panic(err)
 		}
@@ -847,26 +848,38 @@ func paramsDecoder(query map[string]interface{}, params denco.Params, argumentsT
 }
 
 // get proper HTTP response writer based on requested extension
-func (h *RequestHandler) getResponder(r *http.Request, maxResponseSizeKbytes int64) (RecordSetHttpResponder, error) {
+func (h *RequestHandler) getResponder(r *http.Request, maxResponseSizeKbytes int64, route *route) (RecordSetHttpResponder, error) {
 	// the following header is provided by this program just before routing
 	accept := r.Header.Get("X-Accept-Extension")
 	
+	mimeType := ""
+	
 	switch accept {
 	case "json":
-		return NewJsonRecordSetWriter(maxResponseSizeKbytes), nil
+		return NewJsonRecordSetWriter(maxResponseSizeKbytes << 10), nil
 	case "xlsx":
-		return NewXlsxRecordSetWriter(maxResponseSizeKbytes << 10), nil
-	case "csv":
-		return &CsvRecordSetWriter{MaxResponseSizeBytes: maxResponseSizeKbytes << 10}, nil
-	case "bin":
-		return &BinRecordSetWriter{MaxResponseSizeBytes: maxResponseSizeKbytes << 10, ContentType: "application/octet-stream"}, nil
-	default:
-		if mimeType, ok := h.BinaryFormats[accept]; ok {
-			return &BinRecordSetWriter{MaxResponseSizeBytes: maxResponseSizeKbytes << 10, ContentType: mimeType}, nil
+		if route.Proretoid == pgx.ByteaOid && !route.Proretset {
+			mimeType = XlsxMimeType
+		} else {
+			return NewXlsxRecordSetWriter(maxResponseSizeKbytes << 10), nil
 		}
-		
-		return nil, errors.New("Requested format unsupported.")
+	case "csv":
+		if (route.Proretoid == pgx.TextOid || route.Proretoid == pgx.VarcharOid) && !route.Proretset {
+			mimeType = CsvMimeType
+		} else {
+			return &CsvRecordSetWriter{MaxResponseSizeBytes: maxResponseSizeKbytes << 10}, nil
+		}
+	case "bin":
+		mimeType = "application/octet-stream"
+	default:
+		var ok bool
+		mimeType, ok = h.BinaryFormats[accept]
+		if !ok {
+			return nil, errors.New("Requested format unsupported.")
+		}
 	}
+
+	return &BinRecordSetWriter{MaxResponseSizeBytes: maxResponseSizeKbytes << 10, ContentType: mimeType}, nil
 }
 
 // checks TLS common name against configured CA or HTTP Basic authentication as a database user
