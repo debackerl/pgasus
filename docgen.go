@@ -63,8 +63,10 @@ func (g *DocumentationGenerator) GenerateDocumentation(outputPath string) {
 		wtr.WriteString(route.UrlPath)
 		wtr.WriteString("`\r\n\r\n")
 		
-		wtr.WriteString(route.Description)
-		wtr.WriteString("\r\n\r\n")
+		if route.Description != "" {
+			wtr.WriteString(route.Description)
+			wtr.WriteString("\r\n\r\n===\r\n\r\n")
+		}
 		
 		table := tablewriter.NewWriter(wtr)
 		table.SetBorders(tblBorders)
@@ -78,7 +80,7 @@ func (g *DocumentationGenerator) GenerateDocumentation(outputPath string) {
 		table = tablewriter.NewWriter(wtr)
 		table.SetBorders(tblBorders)
 		table.SetCenterSeparator("|")
-		table.SetHeader([]string{"Name", "Type"})
+		table.SetHeader([]string{"Name", "Type", "Optional"})
 		switch route.ObjectType {
 		case "relation":
 			for _, name := range routeParser.FindAllString(route.UrlPath, -1) {
@@ -87,12 +89,17 @@ func (g *DocumentationGenerator) GenerateDocumentation(outputPath string) {
 				if t, ok := route.ParametersTypes[name]; ok {
 					typ = t
 				}
-				table.Append([]string{"`" + name + "`", "`" + strings.TrimSuffix(typ, "[]") + "`"})
+				table.Append([]string{"`" + name + "`", "`" + strings.TrimSuffix(typ, "[]") + "`", "false"})
 			}
 			
 		case "procedure":
+			optionals := make(map[string]struct{})
+			for _, name := range route.OptionalArguments {
+				optionals[name] = struct{}{}
+			}
+			
 			for name, typ := range route.ParametersTypes {
-				table.Append([]string{"`" + name + "`", "`" + typ + "`"})
+				table.Append([]string{"`" + name + "`", "`" + typ + "`", fmt.Sprintf("%t", IsStringInMap(name, optionals))})
 			}
 		}
 		table.Render()

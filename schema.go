@@ -40,6 +40,7 @@ type Route struct {
 	// for documentation generator:
 	RouteID int
 	AllCookies []CookieConfig
+	OptionalArguments []string // procedures only
 	Prorettypname string // procedures only
 	Description string
 }
@@ -236,14 +237,14 @@ func loadObject(tx *pgx.Tx, route *Route) error {
 
 // loads details of a procedure from PostgreSQL for given route
 func loadProc(tx *pgx.Tx, route *Route) error {
-	rows, err := tx.Query(`SELECT pro.proretset, pro.provolatile, typ.typtype, typ.typname, typ.oid FROM pg_proc pro INNER JOIN pg_type typ ON pro.prorettype = typ.oid WHERE pro.proname = $1`, route.ObjectName)
+	rows, err := tx.Query(`SELECT pro.proretset, pro.provolatile, typ.typtype, typ.typname, typ.oid, pro.proargnames[pro.pronargs-pro.pronargdefaults+1:] FROM pg_proc pro INNER JOIN pg_type typ ON pro.prorettype = typ.oid WHERE pro.proname = $1`, route.ObjectName)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	
 	if rows.Next() {
-		if err := rows.Scan(&route.Proretset, &route.Provolatile, &route.Prorettyptype, &route.Prorettypname, &route.Proretoid); err != nil {
+		if err := rows.Scan(&route.Proretset, &route.Provolatile, &route.Prorettyptype, &route.Prorettypname, &route.Proretoid, &route.OptionalArguments); err != nil {
 			return err
 		}
 	} else {
