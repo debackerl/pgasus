@@ -3,6 +3,7 @@ package main
 import (
 	"gopkg.in/alecthomas/kingpin.v1"
 	"github.com/naoina/toml"
+	"github.com/jackc/pgx"
 	"gopkg.in/tylerb/graceful.v1"
 	"crypto/tls"
 	"crypto/x509"
@@ -17,6 +18,9 @@ import (
 var (
 	appCmdLine = kingpin.New("pgasus", "PostgreSQL API Server for Universal Stack.")
 	configPathArg = appCmdLine.Flag("config", "Path to configuration file.").Required().String()
+	serveCmd = appCmdLine.Command("serve", "Start server.")
+	genDocCmd = appCmdLine.Command("gendoc", "Generate documentation.")
+	docOutputPathArg = genDocCmd.Arg("outputPath", "Destination file.").Required().String()
 )
 
 var config struct {
@@ -97,30 +101,34 @@ func loadConfig(path string) {
 }
 
 func main() {
-	kingpin.MustParse(appCmdLine.Parse(os.Args[1:]))
+	cmd := kingpin.MustParse(appCmdLine.Parse(os.Args[1:]))
 	
 	loadConfig(*configPathArg)
 	
 	runtime.GOMAXPROCS(config.System.Maxprocs)
 	
 	var handler RequestHandler
+	handler.DbConnConfig = pgx.ConnConfig {
+		Host: config.Postgres.Socket,
+		Port: config.Postgres.Port,
+		Database: config.Postgres.Database,
+	}
+	handler.Schema = Schema {
+		CookiesDomain: config.Http.CookiesDomain,
+		CookiesPath: config.Http.CookiesPath,
+		RoutesTableName: config.Postgres.RoutesTableName,
+	}
 	handler.Verbose = config.System.Verbose
-	handler.Host = config.Postgres.Socket
-	handler.Port = config.Postgres.Port
-	handler.Database = config.Postgres.Database
 	handler.UpdatesChannelName = config.Postgres.UpdatesChannelName
 	handler.SearchPath = config.Postgres.SearchPath
 	handler.MaxOpenConnections = config.Postgres.MaxOpenConnections
 	handler.ContextParameterName = config.Postgres.ContextParameterName
-	handler.RoutesTableName = config.Postgres.RoutesTableName
 	handler.FtsFunctionName = config.Postgres.FtsFunctionName
 	handler.StatementTimeoutSecs = config.Postgres.StatementTimeoutSecs
 	handler.DefaultCn = config.Http.DefaultClientCn
 	handler.UpdateForwardedForHeader = config.Http.UpdateForwardedForHeader
 	handler.MaxBodySizeKbytes = config.Http.MaxBodySizeKbytes
 	handler.MaxResponseSizeKbytes = config.Http.MaxResponseSizeKbytes
-	handler.CookiesDomain = config.Http.CookiesDomain
-	handler.CookiesPath = config.Http.CookiesPath
 	handler.FilterQueryName = config.Protocol.FilterQueryName
 	handler.SortQueryName = config.Protocol.SortQueryName
 	handler.LimitQueryName = config.Protocol.LimitQueryName
@@ -131,6 +139,17 @@ func main() {
 		handler.BinaryFormats[x.Extension] = x.MimeType
 	}
 	
+	switch cmd {
+	case serveCmd.FullCommand():
+		startServer(handler)
+	case genDocCmd.FullCommand():
+		generateDocumentation(handler)
+	default:
+		log.Fatalln("No command provided.")
+	}
+}
+
+func startServer(handler RequestHandler) {
 	if config.Http.RequestsLogFile != "" {
 		if err := handler.OpenRequestsLogFile(config.Http.RequestsLogFile); err != nil {
 			log.Fatalln(err)
@@ -189,4 +208,14 @@ func main() {
 	}
 	
 	handler.CloseRequestsLogFile()
+}
+
+func generateDocumentation(handler RequestHandler) {
+	docGen := DocumentationGenerator{
+		DbConnConfig: handler.DbConnConfig,
+		Schema: handler.Schema,
+		SearchPath: handler.SearchPath,
+	}
+	
+	docGen.GenerateDocumentation(*docOutputPathArg)
 }

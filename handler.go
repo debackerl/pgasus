@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgx"
 	//"github.com/kr/pretty"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -20,7 +19,6 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"path"
 	"time"
 	"unicode/utf8"
 	"unsafe"
@@ -32,88 +30,32 @@ type RecordSetHttpResponder interface {
 	HttpRespond(hw http.ResponseWriter)
 }
 
-type route struct {
-	Method string
-	UrlPath string
-	ObjectName string
-	ObjectType string
-	TTL int
-	IsPublic bool
-	ContextHeaders pgx.NullHstore
-	ContextParameters []string
-	ParametersTypes map[string]string
-	RawConstants []byte
-	Constants map[string]interface{}
-	MaxLimit int64 // select on relations only
-	HiddenFields map[string]struct{}
-	ReadOnlyFields map[string]struct{} // insert and update on relations only
-	Proretset bool // procedures only, true if it returns a set, false otherwise
-	Provolatile string // procedures only, "i" for immutable, "s" for stable, "v" for volatile
-	Prorettyptype string // procedures only
-	Proretoid pgx.Oid // procedures only
-	Columns string // relations only
-	ContextInputCookies map[string]*cookieConfig // cookies to get from HTTP requests
-	ContextOutputCookies []*cookieConfig // cookies to set in HTTP responses
-}
-
-type cookieConfig struct {
-	ContextVariable NullString `json:"contextVariable"` // name of context variable to read from PostgreSQL's session
-	Name string `json:"name"` // cookie's name
-	MaxAge int `json:"maxAge"` // cookie expires after this many seconds, set to 0 to disable expiration
-	SubDomain NullString `json:"subDomain"` // the subdomain is prepended to the domain specified in the configuration file, null values disable this option
-	Path NullString `json:"path"` // the path is appended to the path specified in the configuration file, null values disable this option
-	Secure bool `json:"secure"` // transmitted over TLS connections only
-	HttpOnly bool `json:"httpOnly"` // transmitted over HTTP(S) connections only, inaccessible via JavaScript
-	Read bool `json:"read"`
-	Write bool `json:"write"`
-}
-
 type RequestHandler struct {
 	handler unsafe.Pointer // placed first to be 64-bit aligned
 	stop int32
-	
+
+	DbConnConfig pgx.ConnConfig
 	Verbose bool
-	Host string
-	Port uint16
-	Database string
 	UpdatesChannelName string
 	SearchPath string
 	MaxOpenConnections int
 	ContextParameterName string
-	RoutesTableName string
 	FtsFunctionName string
 	StatementTimeoutSecs int
 	DefaultCn string
 	UpdateForwardedForHeader bool
 	MaxBodySizeKbytes int64
 	MaxResponseSizeKbytes int64
-	FilterQueryName string
-	SortQueryName string
-	LimitQueryName string
-	CookiesDomain string
-	CookiesPath string
+		FilterQueryName string
+		SortQueryName string
+		LimitQueryName string
 	DefaultContext map[string]string
 	BinaryFormats map[string]string
 	
+	Schema Schema
+	
 	db *pgx.ConnPool
 	reqLogFile *os.File
-}
-
-type NullString struct {
-	String string
-	Valid  bool // Valid is true if String is not NULL
-}
-
-func (s *NullString) UnmarshalJSON(raw []byte) error {
-	s.Valid = string(raw) != "null"
-	
-	if s.Valid {
-		if err := json.Unmarshal(raw, &s.String); err != nil {
-			return err
-		}
-	}
-	
-	return nil
 }
 
 func (h *RequestHandler) OpenRequestsLogFile(path string) error {
@@ -135,11 +77,7 @@ func (h *RequestHandler) CloseRequestsLogFile() {
 func (h *RequestHandler) Load() error {
 	var err error
 	h.db, err = pgx.NewConnPool(pgx.ConnPoolConfig {
-		ConnConfig: pgx.ConnConfig {
-			Host: h.Host,
-			Port: h.Port,
-			Database: h.Database,
-		},
+		ConnConfig: h.DbConnConfig,
 		MaxConnections: h.MaxOpenConnections,
 	})
 	
@@ -235,17 +173,7 @@ func (h *RequestHandler) createHandlers() error {
 	}
 	defer tx.Rollback()
 	
-	if h.SearchPath != "" {
-		if strings.Index(h.SearchPath, ";") >= 0 {
-			return errors.New("Invalid search path: " + h.SearchPath)
-		}
-		
-		if _, err := tx.Exec(`SET LOCAL search_path = ` + h.SearchPath); err != nil {
-			return err
-		}
-	}
-	
-	routes, err := h.loadRoutes(tx, h.RoutesTableName)
+	routes, err := h.Schema.LoadRoutes(tx, h.SearchPath)
 	if err != nil {
 		return err
 	}
@@ -253,16 +181,6 @@ func (h *RequestHandler) createHandlers() error {
 	handlers := make([]denco.Handler, 0, len(routes))
 	
 	for _, r := range routes {
-		if err := loadParametersTypes(tx, r); err != nil {
-			return err
-		}
-
-		if r.ObjectType == "procedure" {
-			if err := loadProc(tx, r); err != nil {
-				return err
-			}
-		}
-
 		var jsonConstants *jason.Object
 		jsonConstants, err = jason.NewObjectFromBytes(r.RawConstants)
 		if err != nil {
@@ -317,178 +235,8 @@ func (h *RequestHandler) createHandlers() error {
 	return nil
 }
 
-// loads all routes defined in PostgreSQL
-func (h *RequestHandler) loadRoutes(tx *pgx.Tx, routesTableName string) ([]*route, error) {
-	rows, err := tx.Query(`SELECT method,url_path,object_name,object_type,ttl,is_public,hidden_fields,readonly_fields,context_mapped_headers,context_mapped_variables,constants,max_limit,context_mapped_cookies FROM ` + quoteIdentifier(routesTableName))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	
-	routes := make([]*route, 0, 16)
-	for rows.Next() {
-		r := new(route)
-		
-		var ttl int32
-		var maxLimit int32
-		var hiddenFields []string
-		var readonlyFields []string
-		var rawCookiesJson []byte
-		if err := rows.Scan(&r.Method, &r.UrlPath, &r.ObjectName, &r.ObjectType, &ttl, &r.IsPublic, &hiddenFields, &readonlyFields, &r.ContextHeaders, &r.ContextParameters, &r.RawConstants, &maxLimit, &rawCookiesJson); err != nil {
-			return nil, err
-		}
-		
-		r.TTL = int(ttl)
-		r.MaxLimit = int64(maxLimit)
-		
-		r.HiddenFields = make(map[string]struct{})
-		for _, hiddenField := range hiddenFields {
-			r.HiddenFields[hiddenField] = struct{}{}
-		}
-		
-		r.ReadOnlyFields = make(map[string]struct{})
-		for _, readonlyField := range readonlyFields {
-			r.ReadOnlyFields[readonlyField] = struct{}{}
-		}
-		
-		if rawCookiesJson != nil {
-			var cookies []cookieConfig
-			
-			if err := json.Unmarshal(rawCookiesJson, &cookies); err != nil {
-				return nil, errors.New(fmt.Sprintf("Could not parse cookies configuration for %v %v, error: %v", r.Method, r.UrlPath, err.Error()))
-			}
-			
-			r.ContextInputCookies = make(map[string]*cookieConfig)
-			r.ContextOutputCookies = make([]*cookieConfig, 0, 4)
-			
-			for i := range cookies {
-				cookie := &cookies[i]
-				
-				if cookie.Read {
-					r.ContextInputCookies[cookie.Name] = cookie
-				}
-				
-				if cookie.Write {
-					r.ContextOutputCookies = append(r.ContextOutputCookies, cookie)
-				}
-				
-				if !cookie.ContextVariable.Valid || cookie.ContextVariable.String == "" {
-					cookie.ContextVariable.Valid = true
-					cookie.ContextVariable.String = cookie.Name
-				}
-				
-				if cookie.SubDomain.Valid {
-					cookie.SubDomain.String = strings.Join([]string{cookie.SubDomain.String, h.CookiesDomain}, ".")
-				} else if h.CookiesDomain != "" {
-					cookie.SubDomain.String = h.CookiesDomain
-					cookie.SubDomain.Valid = true
-				}
-				
-				if cookie.Path.Valid {
-					cookie.Path.String = path.Join(h.CookiesPath, path.Clean(cookie.Path.String))
-				} else if h.CookiesPath != "" {
-					cookie.Path.String = h.CookiesPath
-					cookie.Path.Valid = true
-				}
-			}
-		}
-		
-		routes = append(routes, r)
-	}
-	
-	return routes, nil
-}
-
-func getRelationOid(tx *pgx.Tx, id string) (pgx.Oid, error) {
-	rows, err := tx.Query(`SELECT $1::regclass::oid`, id)
-	if err != nil {
-		return -1, err
-	}
-	defer rows.Close()
-
-	if !rows.Next() {
-		return -1, errors.New("Could not find relation " + id)
-	}
-	
-	var oid pgx.Oid
-	if err = rows.Scan(&oid); err != nil {
-		return -1, err
-	}
-	
-	return oid, nil
-}
-
-// loads types of relation columns or procedure arguments from PostgreSQL for given route
-func loadParametersTypes(tx *pgx.Tx, route *route) error {
-	// for base types, use attribute's type, for domains, use underlying type, otherwise use text
-	var rows *pgx.Rows
-	var err error
-	switch route.ObjectType {
-	case "relation":
-		oid, err := getRelationOid(tx, route.ObjectName)
-		if err != nil {
-			return err
-		}
-		sql := `SELECT att.attname, (CASE typ.typtype WHEN 'b' THEN att.atttypid WHEN 'd' THEN typ.typbasetype ELSE 25 END)::regtype FROM pg_attribute att INNER JOIN pg_type typ ON att.atttypid = typ.oid WHERE att.attrelid = $1 AND att.attisdropped = false AND att.attnum > 0`
-		rows, err = tx.Query(sql, oid)
-	case "procedure":
-		sql := `SELECT args.name, (CASE typ.typtype WHEN 'b' THEN args.type WHEN 'd' THEN typ.typbasetype ELSE 25 END)::regtype FROM (SELECT unnest.* FROM pg_proc, unnest(pg_proc.proargnames, pg_proc.proargtypes::int[]) WHERE pg_proc.proname = $1) AS args(name, type) INNER JOIN pg_type typ ON args.type = typ.oid`
-		rows, err = tx.Query(sql, route.ObjectName)
-	default:
-		return errors.New("Unknown object type: " + route.ObjectType)
-	}
-	
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	
-	route.ParametersTypes = make(map[string]string)
-	fieldsLeft := make([]string, 0, 16)
-	
-	for rows.Next() {
-		var name, typ pgx.NullString
-		if err := rows.Scan(&name, &typ); err != nil {
-			return err
-		}
-		
-		if name.Valid && typ.Valid {
-			route.ParametersTypes[name.String] = typ.String
-			
-			if route.ObjectType == "relation" {
-				if _, ok := route.HiddenFields[name.String]; !ok {
-					fieldsLeft = append(fieldsLeft, quoteIdentifier(name.String))
-				}
-			}
-		}
-	}
-	
-	route.Columns = strings.Join(fieldsLeft, ",")
-
-	return nil
-}
-
-// loads details of a procedure from PostgreSQL for given route
-func loadProc(tx *pgx.Tx, route *route) error {
-	rows, err := tx.Query(`SELECT pro.proretset, pro.provolatile, typ.typtype, typ.oid FROM pg_proc pro INNER JOIN pg_type typ ON pro.prorettype = typ.oid WHERE pro.proname = $1`, route.ObjectName)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	
-	if rows.Next() {
-		if err := rows.Scan(&route.Proretset, &route.Provolatile, &route.Prorettyptype, &route.Proretoid); err != nil {
-			return err
-		}
-	} else {
-		return errors.New("Could not find procedure " + route.ObjectName)
-	}
-	
-	return nil
-}
-
 // makes a request handler for non-batch routes on a relation (GETs and DELETEs)
-func (h *RequestHandler) makeNonBatchRouteHandler(route *route) denco.HandlerFunc {
+func (h *RequestHandler) makeNonBatchRouteHandler(route *Route) denco.HandlerFunc {
 	return func (w http.ResponseWriter, r *http.Request, params denco.Params) {
 		globalQuery := initGlobalQuery(route)
 		paramsDecoder(globalQuery, params, route.ParametersTypes)
@@ -523,7 +271,7 @@ func (h *RequestHandler) makeNonBatchRouteHandler(route *route) denco.HandlerFun
 		
 		switch route.Method {
 		case "get":
-			if err := buildSelectSqlQuery(&sql, h.FtsFunctionName, route.ParametersTypes, route.Columns, route.ObjectName, filter, order, limit); err != nil {
+			if err := buildSelectSqlQuery(&sql, h.FtsFunctionName, route.ParametersTypes, route.SelectedColumns, route.ObjectName, filter, order, limit); err != nil {
 				panic(err)
 			}
 
@@ -567,7 +315,7 @@ func (h *RequestHandler) makeNonBatchRouteHandler(route *route) denco.HandlerFun
 }
 
 // makes a request handler for batch routes on a relation (POSTs and PUTs)
-func (h *RequestHandler) makeBatchRouteHandler(route *route) denco.HandlerFunc {
+func (h *RequestHandler) makeBatchRouteHandler(route *Route) denco.HandlerFunc {
 	return func (w http.ResponseWriter, r *http.Request, params denco.Params) {
 		globalQuery := initGlobalQuery(route)
 		paramsDecoder(globalQuery, params, route.ParametersTypes)
@@ -659,10 +407,10 @@ func (h *RequestHandler) makeBatchRouteHandler(route *route) denco.HandlerFunc {
 }
 
 // makes one SQL insert based on a POST request
-func processPostQuery(h *RequestHandler, route *route, tx *pgx.Tx, responder RecordSetHttpResponder, query map[string]interface{}) {
+func processPostQuery(h *RequestHandler, route *Route, tx *pgx.Tx, responder RecordSetHttpResponder, query map[string]interface{}) {
 	sql := NewSqlBuilder()
 	
-	if err := buildInsertSqlQuery(&sql, h.FtsFunctionName, route.ParametersTypes, route.Columns, route.ObjectName, query); err != nil {
+	if err := buildInsertSqlQuery(&sql, h.FtsFunctionName, route.ParametersTypes, route.SelectedColumns, route.ObjectName, query); err != nil {
 		panic(err)
 	}
 	
@@ -678,7 +426,7 @@ func processPostQuery(h *RequestHandler, route *route, tx *pgx.Tx, responder Rec
 }
 
 // makes a request handler for a route to a procedure
-func (h *RequestHandler) makeProcedureRouteHandler(route *route) denco.HandlerFunc {
+func (h *RequestHandler) makeProcedureRouteHandler(route *Route) denco.HandlerFunc {
 	return func (w http.ResponseWriter, r *http.Request, params denco.Params) {
 		globalQuery := initGlobalQuery(route)
 		paramsDecoder(globalQuery, params, route.ParametersTypes)
@@ -755,7 +503,7 @@ func (h *RequestHandler) makeProcedureRouteHandler(route *route) denco.HandlerFu
 }
 
 // makes one procedure call
-func processProcedureQuery(route *route, tx *pgx.Tx, responder RecordSetHttpResponder, query map[string]interface{}) {
+func processProcedureQuery(route *Route, tx *pgx.Tx, responder RecordSetHttpResponder, query map[string]interface{}) {
 	sql := NewSqlBuilder()
 	// if returned type is a composite type or a setof, then we also send a SELECT * FROM
 	// if returned type is 'record', then we jsonize using row_to_json
@@ -789,7 +537,7 @@ func processProcedureQuery(route *route, tx *pgx.Tx, responder RecordSetHttpResp
 }
 
 // initializes query parameters based on constants defined in route
-func initGlobalQuery(route *route) map[string]interface{} {
+func initGlobalQuery(route *Route) map[string]interface{} {
 	query := make(map[string]interface{})
 	
 	for k, v := range route.Constants {
@@ -848,7 +596,7 @@ func paramsDecoder(query map[string]interface{}, params denco.Params, argumentsT
 }
 
 // get proper HTTP response writer based on requested extension
-func (h *RequestHandler) getResponder(r *http.Request, maxResponseSizeKbytes int64, route *route) (RecordSetHttpResponder, error) {
+func (h *RequestHandler) getResponder(r *http.Request, maxResponseSizeKbytes int64, route *Route) (RecordSetHttpResponder, error) {
 	// the following header is provided by this program just before routing
 	accept := r.Header.Get("X-Accept-Extension")
 	
@@ -988,7 +736,7 @@ func parseQueryString(r *http.Request, globalQuery map[string]interface{}, filte
 }
 
 // compute variables of context based on HTTP request
-func makeContext(r *http.Request, defaultContext map[string]string, params denco.Params, contextInputCookies map[string]*cookieConfig, contextParameters []string, contextHeaders pgx.NullHstore) map[string]string {
+func makeContext(r *http.Request, defaultContext map[string]string, params denco.Params, contextInputCookies map[string]*CookieConfig, contextParameters []string, contextHeaders pgx.NullHstore) map[string]string {
 	context := make(map[string]string)
 	
 	for k, v := range defaultContext {
@@ -1072,7 +820,7 @@ func setTxContext(tx *pgx.Tx, statementTimeout int, role string, sessionParamete
 }
 
 // set cookies in HTTP response
-func setCookies(w http.ResponseWriter, tx *pgx.Tx, sessionParameter string, contextOutputCookies []*cookieConfig) error {
+func setCookies(w http.ResponseWriter, tx *pgx.Tx, sessionParameter string, contextOutputCookies []*CookieConfig) error {
 	sessionParameterLen := len(sessionParameter) + 1
 	
 	if len(contextOutputCookies) == 0 {
