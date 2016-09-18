@@ -55,9 +55,49 @@ func (g *DocumentationGenerator) GenerateDocumentation(outputPath string) {
 	
 	wtr.WriteString("# API Specification\r\n\r\n")
 	
-	wtr.WriteString("## Routes\r\n\r\n")
+	wtr.WriteString("## Resources\r\n\r\n")
 	
+	routesByUrlPath := make(map[string]*RoutesGroup)
+	routesGroups := make([]*RoutesGroup, 0, 8)
 	for _, route := range routes {
+		var group *RoutesGroup
+		
+		if match, ok := routesByUrlPath[route.UrlPath]; ok {
+			group = match
+		} else {
+			group = &RoutesGroup{UrlPath:route.UrlPath}
+			routesByUrlPath[route.UrlPath] = group
+			routesGroups = append(routesGroups, group)
+		}
+		
+		switch route.Method {
+		case "get":
+			group.Get = true
+		case "post":
+			group.Post = true
+		case "put":
+			group.Put = true
+		case "delete":
+			group.Delete = true
+		}
+	}
+	
+	sort.Sort(RoutesByUrlPath(routesGroups))
+	
+	for _, group := range routesGroups {
+		wtr.WriteString("- `")
+		wtr.WriteString(group.UrlPath)
+		wtr.WriteString("`")
+		if group.Get { wtr.WriteString(" [get](#"); wtr.WriteString(anchorName("get " + group.UrlPath)); wtr.WriteString(")") }
+		if group.Post { wtr.WriteString(" [post](#"); wtr.WriteString(anchorName("post " + group.UrlPath)); wtr.WriteString(")") }
+		if group.Put { wtr.WriteString(" [put](#"); wtr.WriteString(anchorName("put " + group.UrlPath)); wtr.WriteString(")") }
+		if group.Delete { wtr.WriteString(" [delete](#"); wtr.WriteString(anchorName("delete " + group.UrlPath)); wtr.WriteString(")") }
+		wtr.WriteString("\r\n")
+	}
+	
+	wtr.WriteString("\r\n## Routes\r\n\r\n")
+	
+	for route_i, route := range routes {
 		optionals := make(map[string]struct{})
 		for _, name := range route.OptionalArguments {
 			optionals[name] = struct{}{}
@@ -75,6 +115,10 @@ func (g *DocumentationGenerator) GenerateDocumentation(outputPath string) {
 			routeArguments[name] = strings.TrimSuffix(typ, "[]")
 		}
 		
+		if route_i > 0 {
+			wtr.WriteString("---\r\n\r\n")
+		}
+		
 		wtr.WriteString("### ")
 		wtr.WriteString(route.Method)
 		wtr.WriteString(" `")
@@ -83,7 +127,7 @@ func (g *DocumentationGenerator) GenerateDocumentation(outputPath string) {
 		
 		if route.Description != "" {
 			wtr.WriteString(route.Description)
-			wtr.WriteString("\r\n\r\n===\r\n\r\n")
+			wtr.WriteString("\r\n\r\n")
 		}
 		
 		table := tablewriter.NewWriter(wtr)
@@ -197,6 +241,34 @@ func (g *DocumentationGenerator) GenerateDocumentation(outputPath string) {
 func IsStringInMap(x string, xs map[string]struct{}) bool {
 	_, ok := xs[x]
 	return ok
+}
+
+func anchorName(s string) string {
+	s = strings.ToLower(s)
+	s = strings.Replace(s, " ", "-", -1)
+	return regexp.MustCompile("[^0-9a-z\\-_]").ReplaceAllString(s, "")
+}
+
+type RoutesGroup struct {
+	UrlPath string
+	Get bool
+	Post bool
+	Put bool
+	Delete bool
+}
+
+type RoutesByUrlPath []*RoutesGroup
+
+func (rs RoutesByUrlPath) Len() int {
+	return len(rs)
+}
+
+func (rs RoutesByUrlPath) Swap(i, j int) {
+	rs[i], rs[j] = rs[j], rs[i]
+}
+
+func (rs RoutesByUrlPath) Less(i, j int) bool {
+	return rs[i].UrlPath < rs[j].UrlPath
 }
 
 type Rows [][]string
