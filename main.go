@@ -214,7 +214,10 @@ func generateDocumentation(handler RequestHandler) {
 	docGen := DocumentationGenerator{
 		DbConnConfig: handler.DbConnConfig,
 		Schema: handler.Schema,
-		SearchPath: handler.SearchPath,
+		SearchPath: config.Postgres.SearchPath,
+		FilterQueryName: config.Protocol.FilterQueryName,
+		SortQueryName: config.Protocol.SortQueryName,
+		LimitQueryName: config.Protocol.LimitQueryName,
 	}
 	
 	docGen.GenerateDocumentation(*docOutputPathArg)

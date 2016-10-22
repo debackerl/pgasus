@@ -46,9 +46,9 @@ type RequestHandler struct {
 	UpdateForwardedForHeader bool
 	MaxBodySizeKbytes int64
 	MaxResponseSizeKbytes int64
-		FilterQueryName string
-		SortQueryName string
-		LimitQueryName string
+	FilterQueryName string
+	SortQueryName string
+	LimitQueryName string
 	DefaultContext map[string]string
 	BinaryFormats map[string]string
 	
@@ -505,8 +505,15 @@ func (h *RequestHandler) makeProcedureRouteHandler(route *Route) denco.HandlerFu
 // makes one procedure call
 func processProcedureQuery(route *Route, tx *pgx.Tx, responder RecordSetHttpResponder, query map[string]interface{}) {
 	sql := NewSqlBuilder()
+	
 	// if returned type is a composite type or a setof, then we also send a SELECT * FROM
 	// if returned type is 'record', then we jsonize using row_to_json
+	// setof record not supported because 'ERROR: a column definition list is required for functions returning "record"'
+	
+	if route.Proretset && route.Proretoid == pgx.RecordOid {
+		panic(errors.New("Functions returning setof record not supported."))
+	}
+	
 	if err := buildProcedureSqlQuery(&sql, route.ObjectName, route.Prorettyptype == "c" || route.Proretset, route.Proretoid == pgx.RecordOid, query); err != nil {
 		panic(err)
 	}

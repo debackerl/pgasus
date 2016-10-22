@@ -112,8 +112,7 @@ func buildDeleteSqlQuery(sql *SqlBuilder, ftsFunction string, argumentsType map[
 func buildProcedureSqlQuery(sql *SqlBuilder, procedure string, proretset bool, jsonize bool, query map[string]interface{}) error {
 	if proretset {
 		if jsonize {
-			// ERROR: a column definition list is required for functions returning "record"
-			return errors.New("Procedures returning setof records are not supported.")
+			return errors.New("No need to jsonize a result set.")
 		} else {
 			sql.WriteSql("SELECT * FROM ")
 		}
