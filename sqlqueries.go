@@ -5,7 +5,7 @@ import (
 	"github.com/debackerl/queryme/go"
 )
 
-func buildSelectSqlQuery(sql *SqlBuilder, ftsFunction string, argumentsType map[string]string, columns string, relation string, filter queryme.Predicate, order []*queryme.SortOrder, limit int64) error {
+func buildSelectSqlQuery(sql *SqlBuilder, ftsFunction string, argumentsType map[string]ArgumentType, columns string, relation string, filter queryme.Predicate, order []*queryme.SortOrder, limit int64) error {
 	sql.WriteSql("SELECT ")
 	sql.WriteSql(columns)
 	sql.WriteSql(" FROM ")
@@ -29,7 +29,7 @@ func buildSelectSqlQuery(sql *SqlBuilder, ftsFunction string, argumentsType map[
 	return nil
 }
 
-func buildInsertSqlQuery(sql *SqlBuilder, ftsFunction string, argumentsType map[string]string, columns string, relation string, query map[string]interface{}) error {
+func buildInsertSqlQuery(sql *SqlBuilder, ftsFunction string, argumentsType map[string]ArgumentType, columns string, relation string, query map[string]interface{}) error {
 	sql.WriteSql("INSERT INTO ")
 	sql.WriteId(relation)
 	
@@ -67,7 +67,7 @@ func buildInsertSqlQuery(sql *SqlBuilder, ftsFunction string, argumentsType map[
 	return nil
 }
 
-func buildUpdateSqlQuery(sql *SqlBuilder, ftsFunction string, argumentsType map[string]string, relation string, filter queryme.Predicate, query map[string]interface{}) error {
+func buildUpdateSqlQuery(sql *SqlBuilder, ftsFunction string, argumentsType map[string]ArgumentType, relation string, filter queryme.Predicate, query map[string]interface{}) error {
 	sql.WriteSql("UPDATE ")
 	sql.WriteId(relation)
 	
@@ -97,7 +97,7 @@ func buildUpdateSqlQuery(sql *SqlBuilder, ftsFunction string, argumentsType map[
 	return nil
 }
 
-func buildDeleteSqlQuery(sql *SqlBuilder, ftsFunction string, argumentsType map[string]string, relation string, filter queryme.Predicate) error {
+func buildDeleteSqlQuery(sql *SqlBuilder, ftsFunction string, argumentsType map[string]ArgumentType, relation string, filter queryme.Predicate) error {
 	sql.WriteSql("DELETE FROM ")
 	sql.WriteId(relation)
 	

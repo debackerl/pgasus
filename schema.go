@@ -15,6 +15,11 @@ type Schema struct {
 	RoutesTableName string
 }
 
+type ArgumentType struct {
+	Name string
+	ElementOid pgx.Oid
+}
+
 type Route struct {
 	Method string
 	UrlPath string
@@ -24,7 +29,7 @@ type Route struct {
 	IsPublic bool
 	ContextHeaders pgx.NullHstore
 	ContextParameters []string
-	ParametersTypes map[string]string // arguments of procedure, or columns of relation
+	ParametersTypes map[string]ArgumentType // arguments of procedure, or columns of relation
 	RawConstants []byte
 	Constants map[string]interface{}
 	MaxLimit int64 // select on relations only
@@ -189,14 +194,14 @@ func loadObject(tx *pgx.Tx, route *Route) error {
 		if err != nil {
 			return err
 		}
-		sql := `SELECT att.attname, (CASE typ.typtype WHEN 'b' THEN att.atttypid WHEN 'd' THEN typ.typbasetype ELSE 25 END)::regtype, typ.oid::regtype, att.atthasdef OR NOT att.attnotnull FROM pg_attribute att INNER JOIN pg_type typ ON att.atttypid = typ.oid WHERE att.attrelid = $1 AND att.attisdropped = false AND att.attnum > 0`
+		sql := `SELECT att.attname, coalesce(etyp.oid, 0), (CASE coalesce(etyp.typtype, typ.typtype) WHEN 'b' THEN att.atttypid::regtype::text WHEN 'd' THEN coalesce(etyp.typbasetype::regtype::text || '[]', typ.typbasetype::regtype::text) ELSE (CASE WHEN typ.typcategory = 'A' THEN 25::regtype::text || '[]' ELSE 25::regtype::text END) END), typ.oid::regtype, att.atthasdef OR NOT att.attnotnull FROM pg_attribute att INNER JOIN pg_type typ ON att.atttypid = typ.oid LEFT JOIN pg_type etyp ON typ.typelem = etyp.oid AND typ.typcategory = 'A' WHERE att.attrelid = $1 AND att.attisdropped = false AND att.attnum > 0`
 		rows, err = tx.Query(sql, oid)
 	case "procedure":
 		oid, err = getProcedureOid(tx, route.ObjectName)
 		if err != nil {
 			return err
 		}
-		sql := `SELECT args.name, (CASE typ.typtype WHEN 'b' THEN args.type WHEN 'd' THEN typ.typbasetype ELSE 25 END)::regtype, typ.oid::regtype, isoptional FROM (SELECT (row_number() OVER ()) BETWEEN (pg_proc.pronargs-pg_proc.pronargdefaults+1) AND pg_proc.pronargs, unnest.* FROM pg_proc, unnest(pg_proc.proargnames, pg_proc.proargtypes::int[]) WHERE pg_proc.oid = $1) AS args(isoptional, name, type) INNER JOIN pg_type typ ON args.type = typ.oid`
+		sql := `SELECT args.name, coalesce(etyp.oid, 0), (CASE coalesce(etyp.typtype, typ.typtype) WHEN 'b' THEN args.type::regtype::text WHEN 'd' THEN coalesce(etyp.typbasetype::regtype::text || '[]', typ.typbasetype::regtype::text) ELSE (CASE WHEN typ.typcategory = 'A' THEN 25::regtype::text || '[]' ELSE 25::regtype::text END) END), typ.oid::regtype, isoptional FROM (SELECT (row_number() OVER ()) BETWEEN (pg_proc.pronargs-pg_proc.pronargdefaults+1) AND pg_proc.pronargs, unnest.* FROM pg_proc, unnest(pg_proc.proargnames, pg_proc.proargtypes::int[]) WHERE pg_proc.oid = $1) AS args(isoptional, name, type) INNER JOIN pg_type typ ON args.type = typ.oid LEFT JOIN pg_type etyp ON typ.typelem = etyp.oid AND typ.typcategory = 'A'`
 		rows, err = tx.Query(sql, oid)
 	default:
 		return errors.New("Unknown object type: " + route.ObjectType)
@@ -207,20 +212,21 @@ func loadObject(tx *pgx.Tx, route *Route) error {
 	}
 	defer rows.Close()
 	
-	route.ParametersTypes = make(map[string]string)
+	route.ParametersTypes = make(map[string]ArgumentType)
 	route.ParametersDeclTypes = make(map[string]string)
 	fieldsLeft := make([]string, 0, 16)
 	optionalArguments := make([]string, 0, 16)
 	
 	for rows.Next() {
 		var name, typ, declTyp pgx.NullString
+		var eoid pgx.Oid;
 		var isoptional bool
-		if err := rows.Scan(&name, &typ, &declTyp, &isoptional); err != nil {
+		if err := rows.Scan(&name, &eoid, &typ, &declTyp, &isoptional); err != nil {
 			return err
 		}
 		
 		if name.Valid && typ.Valid {
-			route.ParametersTypes[name.String] = typ.String
+			route.ParametersTypes[name.String] = ArgumentType { Name: typ.String, ElementOid: eoid }
 			
 			if route.ObjectType == "relation" {
 				if _, ok := route.HiddenFields[name.String]; !ok {

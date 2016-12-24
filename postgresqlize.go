@@ -7,7 +7,7 @@ import (
 )
 
 // PredicateToSql converts a Predicate to its equivalent SQL form and extracts constant to a seperate array. Each referenced field is matched against a list of allowed fields.
-func PredicateToPostgreSql(sql *SqlBuilder, ftsFunction string, argumentsType map[string]string, predicate queryme.Predicate) {
+func PredicateToPostgreSql(sql *SqlBuilder, ftsFunction string, argumentsType map[string]ArgumentType, predicate queryme.Predicate) {
 	visitor := predicateSqlizer { Sql: sql, FtsFunction: ftsFunction, ArgumentsType: argumentsType }
 
 	predicate.Accept(&visitor)
@@ -31,12 +31,12 @@ func SortOrderToPostgreSql(sql *SqlBuilder, sortOrder []*queryme.SortOrder) {
 type predicateSqlizer struct {
 	Sql *SqlBuilder
 	FtsFunction string
-	ArgumentsType map[string]string
+	ArgumentsType map[string]ArgumentType
 }
 
 func (s *predicateSqlizer) isFieldArray(field string) bool {
 	if typ, ok := s.ArgumentsType[field]; ok {
-		return strings.HasSuffix(typ, "[]")
+		return strings.HasSuffix(typ.Name, "[]")
 	}
 	return false
 }
@@ -51,7 +51,7 @@ func (s *predicateSqlizer) AppendId(id string) {
 
 func (s *predicateSqlizer) AppendValue(field string, value interface{}) {
 	if typ, ok := s.ArgumentsType[field]; ok {
-		switch typ {
+		switch typ.Name {
 		case "smallint", "integer", "bigint", "smallint[]", "integer[]", "bigint[]":
 			if f, ok := value.(float64); ok {
 				value = int64(f)
@@ -111,7 +111,7 @@ func (s *predicateSqlizer) VisitEq(field queryme.Field, operands []queryme.Value
 			s.AppendValue(f, operands[0])
 			s.AppendSql("]::")
 			typ, _ := s.ArgumentsType[f]
-			s.AppendSql(typ)
+			s.AppendSql(typ.Name)
 		} else if operands[0] == nil {
 			s.AppendSql(" IS NULL")
 		} else {
@@ -130,7 +130,7 @@ func (s *predicateSqlizer) VisitEq(field queryme.Field, operands []queryme.Value
 			}
 			s.AppendSql("]::")
 			typ, _ := s.ArgumentsType[f]
-			s.AppendSql(typ)
+			s.AppendSql(typ.Name)
 		} else {
 			seen := 0
 			test_null := false

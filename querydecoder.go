@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func decodeHttpBody(w http.ResponseWriter, r *http.Request, argumentsType map[string]string, readonlyFields map[string]struct{}, maxBodySizeKbytes int64) (queries []map[string]interface{}, batch bool, err error) {
+func decodeHttpBody(w http.ResponseWriter, r *http.Request, argumentsType map[string]ArgumentType, readonlyFields map[string]struct{}, maxBodySizeKbytes int64) (queries []map[string]interface{}, batch bool, err error) {
 	body := http.MaxBytesReader(w, r.Body, maxBodySizeKbytes)
 	
 	queries = make([]map[string]interface{}, 0, 1)
@@ -78,7 +78,7 @@ func decodeHttpBody(w http.ResponseWriter, r *http.Request, argumentsType map[st
 	return
 }
 
-func prepareArgumentsFromForm(arguments url.Values, argumentsType map[string]string, readonlyFields map[string]struct{}) (query map[string]interface{}, err error) {
+func prepareArgumentsFromForm(arguments url.Values, argumentsType map[string]ArgumentType, readonlyFields map[string]struct{}) (query map[string]interface{}, err error) {
 	query = make(map[string]interface{})
 	
 	for key, value := range arguments {
@@ -98,7 +98,7 @@ func prepareArgumentsFromForm(arguments url.Values, argumentsType map[string]str
 	return
 }
 
-func prepareArgumentsFromObject(arguments *jason.Object, argumentsType map[string]string, readonlyFields map[string]struct{}) (query map[string]interface{}, err error) {
+func prepareArgumentsFromObject(arguments *jason.Object, argumentsType map[string]ArgumentType, readonlyFields map[string]struct{}) (query map[string]interface{}, err error) {
 	query = make(map[string]interface{})
 	
 	for key, value := range arguments.Map() {
@@ -123,7 +123,7 @@ func prepareArgumentsFromObject(arguments *jason.Object, argumentsType map[strin
 	return
 }
 
-func prepareArgumentsFromQueryString(rawQuery string, argumentsType map[string]string) (query map[string]interface{}, err error) {
+func prepareArgumentsFromQueryString(rawQuery string, argumentsType map[string]ArgumentType) (query map[string]interface{}, err error) {
 	var values url.Values
 	
 	values, err = url.ParseQuery(rawQuery)
@@ -152,11 +152,11 @@ func prepareArgumentsFromQueryString(rawQuery string, argumentsType map[string]s
 	return
 }
 
-func decodeArgumentFromJsonValue(value *jason.Value, typ string) (arg interface{}, err error) {
+func decodeArgumentFromJsonValue(value *jason.Value, typ ArgumentType) (arg interface{}, err error) {
 	if null := value.Null(); null == nil {
 		arg = nil
 	} else {
-		switch typ {
+		switch typ.Name {
 		case "boolean":
 			arg, err = value.Boolean()
 		case "boolean[]":
@@ -182,7 +182,7 @@ func decodeArgumentFromJsonValue(value *jason.Value, typ string) (arg interface{
 		case "character", "character varying", "text", "uuid", "date", "time without time zone", "time with time zone":
 			arg, err = value.String()
 		case "character[]", "character varying[]", "text[]", "uuid[]", "date[]", "time without time zone[]", "time with time zone[]":
-			arg, err = valueToStringArray(value)
+			arg, err = valueToStringArray(value, typ.ElementOid)
 		case "timestamp without time zone", "timestamp with time zone":
 			arg, err = valueToTime(value)
 		case "timestamp without time zone[]", "timestamp with time zone[]":
@@ -401,18 +401,18 @@ func valueToFloat64Array(value *jason.Value) (array []float64, err error) {
 	return
 }
 
-func valueToStringArray(value *jason.Value) (array []string, err error) {
+func valueToStringArray(value *jason.Value, elementType pgx.Oid) (array StringArray, err error) {
 	if values, ok := value.Array(); ok == nil {
-		array = make([]string, 0, 8)
+		strings := make([]string, 0, 8)
 		for _, subValue := range values {
 			var converted string
 			converted, err = subValue.String()
 			if err != nil {
-				array = nil
 				return
 			}
-			array = append(array, converted)
+			strings = append(strings, converted)
 		}
+		array = StringArray { ElementType: elementType, Values: strings }
 	} else {
 		err = errors.New("JSON array expected.")
 	}

@@ -131,13 +131,14 @@ func (h *RequestHandler) StopReloads() {
 // listens to updates on the routes table for auto-reload
 func (h *RequestHandler) listen() {
 	go func() {
+		log.Println("Listening to routes updates...")
 		for atomic.LoadInt32(&h.stop) == 0 {
 			conn, err := h.db.Acquire()
 			if err != nil {
 				log.Fatalln(err)
 			}
 			
-			if err := conn.Listen(quoteIdentifier(h.UpdatesChannelName)); err != nil {
+			if err := conn.Listen(h.UpdatesChannelName); err != nil {
 				log.Println(err)
 				conn.Close()
 				h.db.Release(conn)
@@ -150,7 +151,6 @@ func (h *RequestHandler) listen() {
 						h.db.Release(conn)
 						break
 					}
-					
 					if notification != nil && notification.Channel == h.UpdatesChannelName {
 						log.Println("Routes reload requested.")
 						if err := h.createHandlers(); err != nil {
@@ -555,13 +555,13 @@ func initGlobalQuery(route *Route) map[string]interface{} {
 }
 
 // updates query parameters based on route parameters and types of columns or arguments expected by PostgreSQL
-func paramsDecoder(query map[string]interface{}, params denco.Params, argumentsType map[string]string) (err error) {
+func paramsDecoder(query map[string]interface{}, params denco.Params, argumentsType map[string]ArgumentType) (err error) {
 	for _, p := range params {
 		if typ, ok := argumentsType[p.Name]; ok {
 			var arg interface{} = nil
 			val := p.Value
 			
-			switch typ {
+			switch typ.Name {
 			case "boolean":
 				switch val {
 				case "":
