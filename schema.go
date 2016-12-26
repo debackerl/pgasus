@@ -282,17 +282,17 @@ func loadProc(tx *pgx.Tx, route *Route) error {
 func getRelationOid(tx *pgx.Tx, id string) (pgx.Oid, error) {
 	rows, err := tx.Query(`SELECT $1::regclass::oid`, id)
 	if err != nil {
-		return -1, err
+		return 0, err
 	}
 	defer rows.Close()
 
 	if !rows.Next() {
-		return -1, errors.New("Could not find relation " + id)
+		return 0, errors.New("Could not find relation " + id)
 	}
 	
 	var oid pgx.Oid
 	if err = rows.Scan(&oid); err != nil {
-		return -1, err
+		return 0, err
 	}
 	
 	return oid, nil
@@ -301,17 +301,17 @@ func getRelationOid(tx *pgx.Tx, id string) (pgx.Oid, error) {
 func getProcedureOid(tx *pgx.Tx, id string) (pgx.Oid, error) {
 	rows, err := tx.Query(`SELECT $1::regproc::oid`, id)
 	if err != nil {
-		return -1, err
+		return 0, err
 	}
 	defer rows.Close()
 
 	if !rows.Next() {
-		return -1, errors.New("Could not find procedure " + id)
+		return 0, errors.New("Could not find procedure " + id)
 	}
 	
 	var oid pgx.Oid
 	if err = rows.Scan(&oid); err != nil {
-		return -1, err
+		return 0, err
 	}
 	
 	return oid, nil

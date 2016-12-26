@@ -25,12 +25,13 @@
 package main
 
 import (
-	//"gopkg.in/jackc/pgx.v2"
 	"github.com/jackc/pgx"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"net"
+	"strings"
 	"time"
 )
 
@@ -70,8 +71,15 @@ func readRecords(dst RecordSetVisitor, singleRow bool, rows *pgx.Rows) error {
 		}
 	}
 	
-	if rows.Err() != nil {
-		return rows.Err()
+	if err := rows.Err(); err != nil {
+		if(strings.Contains(err.Error(), "SQLSTATE 57014")) {
+			// 57014 = query_canceled. When a timeout occurs in a function,
+			// it is not always properly cleaned up while exiting.
+			// Subsequent calls may not respond while reusing connection.
+			log.Println("Closing connection following query_canceled error.4")
+			rows.Conn().Close()
+		}
+		return err
 	}
 	
 	if !singleRow {
@@ -95,6 +103,13 @@ func readScalar(dst RecordSetVisitor, rows *pgx.Rows) error {
 			return err
 		}
 	} else {
+		if(strings.Contains(rows.Err().Error(), "SQLSTATE 57014")) {
+			// 57014 = query_canceled. When a timeout occurs in a function,
+			// it is not always properly cleaned up while exiting.
+			// Subsequent calls may not respond while reusing connection.
+			log.Println("Closing connection following query_canceled error.")
+			rows.Conn().Close()
+		}
 		return rows.Err()
 	}
 	

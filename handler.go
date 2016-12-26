@@ -5,7 +5,6 @@ import (
 	"github.com/antonholmquist/jason"
 	"github.com/debackerl/queryme/go"
 	"github.com/naoina/denco"
-	//"gopkg.in/jackc/pgx.v2"
 	"github.com/jackc/pgx"
 	//"github.com/kr/pretty"
 	"encoding/base64"
