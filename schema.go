@@ -12,6 +12,7 @@ import (
 type Schema struct {
 	CookiesDomain string
 	CookiesPath string
+	CookiesDisableSecure bool
 	RoutesTableName string
 }
 
@@ -160,6 +161,10 @@ func (s *Schema) LoadRoutes(tx *pgx.Tx, searchPath string) ([]*Route, error) {
 				} else if s.CookiesPath != "" {
 					cookie.Path.String = s.CookiesPath
 					cookie.Path.Valid = true
+				}
+				
+				if s.CookiesDisableSecure {
+					cookie.Secure = false
 				}
 			}
 		}

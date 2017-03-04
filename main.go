@@ -46,6 +46,7 @@ var config struct {
 		ShutdownTimeoutSecs int
 		CookiesDomain string
 		CookiesPath string
+		CookiesDisableSecure bool
 	}
 	
 	Postgres struct {
@@ -116,6 +117,7 @@ func main() {
 	handler.Schema = Schema {
 		CookiesDomain: config.Http.CookiesDomain,
 		CookiesPath: config.Http.CookiesPath,
+		CookiesDisableSecure: config.Http.CookiesDisableSecure,
 		RoutesTableName: config.Postgres.RoutesTableName,
 	}
 	handler.Verbose = config.System.Verbose
