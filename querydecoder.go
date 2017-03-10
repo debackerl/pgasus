@@ -266,13 +266,18 @@ func valueToHstore(value *jason.Value) (hstore pgx.NullHstore, err error) {
 			if value.Null() == nil {
 				
 			} else {
-				var raw []byte
-				raw, err = value.Marshal()
+				ns.String, err = value.String()
 				if err != nil {
-					return
+					err = nil
+					var raw []byte
+					raw, err = value.Marshal()
+					if err != nil {
+						return
+					}
+					
+					ns.String = string(raw)
 				}
 				
-				ns.String = string(raw)
 				ns.Valid = true
 			}
 			
