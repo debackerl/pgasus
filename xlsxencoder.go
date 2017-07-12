@@ -133,11 +133,7 @@ func (w *XlsxRecordSetWriter) EndObject(rs *RecordSet) error {
 }
 
 func (w *XlsxRecordSetWriter) Null(rs *RecordSet) error {
-	if w.depth > 0 {
-		return nil
-	}
-	
-	return w.check()
+	return nil
 }
 
 func (w *XlsxRecordSetWriter) Bool(rs *RecordSet, v bool) error {
