@@ -13,7 +13,7 @@ import (
 )
 
 func decodeHttpBody(w http.ResponseWriter, r *http.Request, argumentsType map[string]ArgumentType, readonlyFields map[string]struct{}, maxBodySizeKbytes int64) (queries []map[string]interface{}, batch bool, err error) {
-	body := http.MaxBytesReader(w, r.Body, maxBodySizeKbytes)
+	body := http.MaxBytesReader(w, r.Body, maxBodySizeKbytes * 1024)
 	
 	queries = make([]map[string]interface{}, 0, 1)
 	
