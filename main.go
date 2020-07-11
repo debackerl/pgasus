@@ -112,6 +112,8 @@ func main() {
 	handler.DbConnConfig = pgx.ConnConfig {
 		Host: config.Postgres.Socket,
 		Port: config.Postgres.Port,
+		User: os.Getenv("PG_USER"),
+		Password: os.Getenv("PG_PASSWORD"),
 		Database: config.Postgres.Database,
 	}
 	handler.Schema = Schema {
