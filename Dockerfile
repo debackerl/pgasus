@@ -18,9 +18,7 @@ RUN addgroup -S pgasus -g 1001 && \
 FROM scratch
 
 WORKDIR /
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /etc/passwd /etc/passwd
-COPY --from=builder /etc/group /etc/group
+COPY --from=builder /etc/group /etc/hostname /etc/hosts /etc/nsswitch.conf /etc/passwd /etc/services /etc/shadow /etc/ssl /etc/
 COPY --from=builder /bin/pgasus /bin/pgasus
 
 USER pgasus
