@@ -638,6 +638,11 @@ func (h *RequestHandler) getResponder(r *http.Request, maxResponseSizeKbytes int
 
 // checks TLS common name against configured CA or HTTP Basic authentication as a database user
 func getClientRole(tx *pgx.Tx, r *http.Request, defaultCn string) (string, error) {
+	if defaultCn == "" {
+		// if defaultCn is not specified, we don't active impersonalisation
+		return "", nil
+	}
+
 	if r.TLS != nil && r.TLS.PeerCertificates != nil && len(r.TLS.PeerCertificates) > 0 {
 		return r.TLS.PeerCertificates[0].Subject.CommonName, nil
 	}
@@ -780,10 +785,9 @@ func makeContext(r *http.Request, defaultContext map[string]string, params denco
 // set context in PostgreSQL transaction
 func setTxContext(tx *pgx.Tx, statementTimeout int, role string, sessionParameter string, context map[string]string) error {
 	builder := NewSqlBuilder()
-	builder.WriteSql("SET LOCAL ROLE ")
-	if role == "" {
-		builder.WriteSql("NONE")
-	} else {
+	
+	if role != "" {
+		builder.WriteSql("SET LOCAL ROLE ")
 		builder.WriteSql("E")
 		builder.WriteSql(quoteWith(role, '\'', true))
 	}
