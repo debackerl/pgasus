@@ -784,16 +784,18 @@ func makeContext(r *http.Request, defaultContext map[string]string, params denco
 
 // set context in PostgreSQL transaction
 func setTxContext(tx *pgx.Tx, statementTimeout int, role string, sessionParameter string, context map[string]string) error {
-	builder := NewSqlBuilder()
-	
+	var builder SqlBuilder
+
 	if role != "" {
+		builder = NewSqlBuilder()
+
 		builder.WriteSql("SET LOCAL ROLE ")
 		builder.WriteSql("E")
 		builder.WriteSql(quoteWith(role, '\'', true))
-	}
-	
-	if _, err := tx.Exec(builder.Sql(), builder.Values()...); err != nil {
-		return err
+
+		if _, err := tx.Exec(builder.Sql(), builder.Values()...); err != nil {
+			return err
+		}
 	}
 	
 	// use current_setting(setting_name) to get context variables
