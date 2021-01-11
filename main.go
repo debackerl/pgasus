@@ -7,6 +7,9 @@ import (
 	"gopkg.in/tylerb/graceful.v1"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
+	"errors"
+	"fmt"
 	"net/http"
 	"log"
 	"os"
@@ -21,6 +24,7 @@ var (
 	serveCmd = appCmdLine.Command("serve", "Start server.")
 	genDocCmd = appCmdLine.Command("gendoc", "Generate documentation.")
 	docOutputPathArg = genDocCmd.Arg("outputPath", "Destination file.").Required().String()
+	serverCertificate *x509.Certificate
 )
 
 var config struct {
@@ -52,6 +56,7 @@ var config struct {
 	Postgres struct {
 		Socket string
 		Port uint16
+		ServerCertificate string
 		Database string
 		UpdatesChannelName string
 		SearchPath string
@@ -101,6 +106,47 @@ func loadConfig(path string) {
 	}
 }
 
+func checkServerCertificate(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+	if len(rawCerts) != 1 {
+		return fmt.Errorf("One server certificate expected, %d received", len(rawCerts))
+	}
+
+	cert, err := x509.ParseCertificate(rawCerts[0])
+	if err == nil {
+		if cert.Equal(serverCertificate) {
+			return nil
+		}
+	}
+
+	return errors.New("Invalid server certificate.")
+}
+
+func loadServerCertificate(path string) {
+	certPem, err := ioutil.ReadFile(path)
+	if err != nil {
+		log.Fatalln("Cannot read server certificate:", err)
+	}
+
+	for len(certPem) > 0 {
+		var block *pem.Block
+		block, certPem = pem.Decode(certPem)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
+			continue
+		}
+
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			continue
+		}
+
+		serverCertificate = cert
+		certPem = []byte {}
+	}
+}
+
 func main() {
 	cmd := kingpin.MustParse(appCmdLine.Parse(os.Args[1:]))
 	
@@ -108,6 +154,28 @@ func main() {
 	
 	runtime.GOMAXPROCS(config.System.Maxprocs)
 	
+	var tlsConfig *tls.Config
+	if config.Postgres.Socket[0] != '/' {
+		// when not using Unix sockets, then TLS is required
+
+		insecureSkipVerify := false
+		var verifyPeerCertificate func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error
+		serverName := config.Postgres.Socket
+
+		if config.Postgres.ServerCertificate != "" {
+			loadServerCertificate(config.Postgres.ServerCertificate)
+			serverName = ""
+			verifyPeerCertificate = checkServerCertificate
+			insecureSkipVerify = true
+		}
+
+		tlsConfig = &tls.Config {
+			InsecureSkipVerify: insecureSkipVerify,
+			VerifyPeerCertificate: verifyPeerCertificate,
+			ServerName: serverName,
+		}
+	}
+
 	var handler RequestHandler
 	handler.DbConnConfig = pgx.ConnConfig {
 		Host: config.Postgres.Socket,
@@ -115,6 +183,7 @@ func main() {
 		User: os.Getenv("PG_USER"),
 		Password: os.Getenv("PG_PASSWORD"),
 		Database: config.Postgres.Database,
+		TLSConfig: tlsConfig,
 	}
 	handler.Schema = Schema {
 		CookiesDomain: config.Http.CookiesDomain,

@@ -23,4 +23,4 @@ COPY --from=builder /bin/pgasus /bin/pgasus
 
 USER pgasus
 
-CMD ["/bin/pgasus"]
+CMD ["/bin/pgasus", "--config=/etc/pgasus.conf", "serve"]
