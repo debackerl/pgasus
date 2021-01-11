@@ -35,6 +35,7 @@ var config struct {
 
 	Http struct {
 		Address string
+		UrlPrefix string
 		MaxOpenConnections int
 		Key string
 		Cert string
@@ -192,6 +193,7 @@ func main() {
 		RoutesTableName: config.Postgres.RoutesTableName,
 	}
 	handler.Verbose = config.System.Verbose
+	handler.UrlPrefix = config.Http.UrlPrefix
 	handler.UpdatesChannelName = config.Postgres.UpdatesChannelName
 	handler.SearchPath = config.Postgres.SearchPath
 	handler.MaxOpenConnections = config.Postgres.MaxOpenConnections

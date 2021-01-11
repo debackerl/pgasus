@@ -35,6 +35,7 @@ type RequestHandler struct {
 
 	DbConnConfig pgx.ConnConfig
 	Verbose bool
+	UrlPrefix string
 	UpdatesChannelName string
 	SearchPath string
 	MaxOpenConnections int
@@ -97,6 +98,16 @@ func (h *RequestHandler) Load() error {
 
 func (h *RequestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
+
+	prefix := h.UrlPrefix
+	if !strings.HasPrefix(path, prefix) {
+		w.WriteHeader(400)
+		w.Write([]byte("No routes in this path."))
+		return
+	}
+
+	path = path[len(prefix):]
+
 	sepIdx := lastIndexRune(path, '.')
 	
 	if sepIdx == -1 || sepIdx == len(path) - 1 {
