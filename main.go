@@ -4,15 +4,16 @@ import (
 	"gopkg.in/alecthomas/kingpin.v1"
 	"github.com/naoina/toml"
 	"github.com/jackc/pgx"
-	"gopkg.in/tylerb/graceful.v1"
 	"crypto/tls"
 	"crypto/x509"
+	"context"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"net/http"
 	"log"
 	"os"
+	"os/signal"
 	"io/ioutil"
 	"runtime"
 	"time"
@@ -36,7 +37,7 @@ var config struct {
 	Http struct {
 		Address string
 		UrlPrefix string
-		MaxOpenConnections int
+		//MaxOpenConnections int
 		Key string
 		Cert string
 		RequestsLogFile string
@@ -48,7 +49,7 @@ var config struct {
 		MaxResponseSizeKbytes int64
 		ReadTimeoutSecs int
 		WriteTimeoutSecs int
-		ShutdownTimeoutSecs int
+		//ShutdownTimeoutSecs int
 		CookiesDomain string
 		CookiesPath string
 		CookiesDisableSecure bool
@@ -87,7 +88,7 @@ func loadConfig(path string) {
 	config.Http.Address = ":https"
 	config.Http.ReadTimeoutSecs = 10
 	config.Http.WriteTimeoutSecs = 10
-	config.Http.ShutdownTimeoutSecs = 60
+	//config.Http.ShutdownTimeoutSecs = 60
 	config.Postgres.ContextParameterName = "context"
 	config.Postgres.RoutesTableName = "routes"
 	
@@ -247,43 +248,54 @@ func startServer(handler RequestHandler) {
 		}
 	}
 	
-	svr := 	&graceful.Server {
-		Timeout: time.Duration(config.Http.ShutdownTimeoutSecs) * time.Second,
-		ListenLimit: config.Http.MaxOpenConnections,
-		ShutdownInitiated: func() {
-			if config.System.Verbose {
-				log.Println("pgasus shutdown requested.")
-			}
-			handler.StopReloads()
-		},
-		Server: &http.Server {
-			Addr:           config.Http.Address,
-			Handler:        &handler,
-			ReadTimeout:    time.Duration(config.Http.ReadTimeoutSecs) * time.Second,
-			WriteTimeout:   time.Duration(config.Http.WriteTimeoutSecs) * time.Second,
-			MaxHeaderBytes: config.Http.MaxHeaderSizeKbytes << 10,
-			// disable HTTP/2 (issue with Kubernetes probe when HTTPS scheme is enabled)
-			TLSNextProto:   make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
-			TLSConfig:      &tls.Config {
-				ClientCAs:  certPool,
-			},
+	svr := http.Server {
+		Addr:           config.Http.Address,
+		Handler:        &handler,
+		ReadTimeout:    time.Duration(config.Http.ReadTimeoutSecs) * time.Second,
+		WriteTimeout:   time.Duration(config.Http.WriteTimeoutSecs) * time.Second,
+		MaxHeaderBytes: config.Http.MaxHeaderSizeKbytes << 10,
+		// disable HTTP/2 (issue with Kubernetes probe when HTTPS scheme is enabled)
+		TLSNextProto:   make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
+		TLSConfig:      &tls.Config {
+			ClientCAs:  certPool,
 		},
 	}
-	
+
+	svr.RegisterOnShutdown(func() {
+		if config.System.Verbose {
+			log.Println("pgasus shutdown requested.")
+		}
+		handler.StopReloads()
+	})
+
+	idleConnsClosed := make(chan struct{})
+	go func() {
+		sigint := make(chan os.Signal, 1)
+		signal.Notify(sigint, os.Interrupt)
+		<-sigint
+
+		if err := svr.Shutdown(context.Background()); err != nil {
+			log.Printf("Error while shutting down: %v", err)
+		}
+
+		close(idleConnsClosed)
+	}()
+
 	if config.System.Verbose {
 		log.Println("pgasus started.")
 	}
 	
 	if config.Http.Key != "" && config.Http.Cert != "" {
-		if err := svr.ListenAndServeTLS(config.Http.Cert, config.Http.Key); err != nil {
+		if err := svr.ListenAndServeTLS(config.Http.Cert, config.Http.Key); err != http.ErrServerClosed {
 			log.Fatalln(err)
 		}
 	} else {
-		if err := svr.ListenAndServe(); err != nil {
+		if err := svr.ListenAndServe(); err != http.ErrServerClosed {
 			log.Fatalln(err)
 		}
 	}
 	
+	<-idleConnsClosed // wait for last connections to close
 	handler.CloseRequestsLogFile()
 }
 
