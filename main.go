@@ -262,6 +262,8 @@ func startServer(handler RequestHandler) {
 			ReadTimeout:    time.Duration(config.Http.ReadTimeoutSecs) * time.Second,
 			WriteTimeout:   time.Duration(config.Http.WriteTimeoutSecs) * time.Second,
 			MaxHeaderBytes: config.Http.MaxHeaderSizeKbytes << 10,
+			// disable HTTP/2 (issue with Kubernetes probe when HTTPS scheme is enabled)
+			TLSNextProto:   make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
 			TLSConfig:      &tls.Config {
 				ClientCAs:  certPool,
 			},
