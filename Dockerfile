@@ -14,7 +14,7 @@ RUN ls -lh . && go version && GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" 
 RUN addgroup -S pgasus -g 1001 && \
     adduser -S pgasus -u 1001 -g pgasus
 
-FROM alpine:3.13
+FROM alpine:3.14
 
 WORKDIR /
 COPY --from=builder /etc/group /etc/hostname /etc/hosts /etc/nsswitch.conf /etc/passwd /etc/services /etc/shadow /etc/ssl /etc/

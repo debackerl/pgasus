@@ -1,85 +1,87 @@
 package main
 
 import (
-	"gopkg.in/alecthomas/kingpin.v1"
-	"github.com/naoina/toml"
-	"github.com/jackc/pgx"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"context"
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"net/http"
+	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
-	"io/ioutil"
 	"runtime"
 	"time"
+
+	"github.com/jackc/pgx"
+	"github.com/naoina/toml"
+	"gopkg.in/alecthomas/kingpin.v1"
 )
 
 var (
-	appCmdLine = kingpin.New("pgasus", "PostgreSQL API Server for Universal Stack.")
-	configPathArg = appCmdLine.Flag("config", "Path to configuration file.").Required().String()
-	serveCmd = appCmdLine.Command("serve", "Start server.")
-	genDocCmd = appCmdLine.Command("gendoc", "Generate documentation.")
-	docOutputPathArg = genDocCmd.Arg("outputPath", "Destination file.").Required().String()
+	appCmdLine        = kingpin.New("pgasus", "PostgreSQL API Server for Universal Stack.")
+	configPathArg     = appCmdLine.Flag("config", "Path to configuration file.").Required().String()
+	serveCmd          = appCmdLine.Command("serve", "Start server.")
+	genDocCmd         = appCmdLine.Command("gendoc", "Generate documentation.")
+	docOutputPathArg  = genDocCmd.Arg("outputPath", "Destination file.").Required().String()
 	serverCertificate *x509.Certificate
 )
 
 var config struct {
 	System struct {
 		Maxprocs int
-		Verbose bool
+		Verbose  bool
 	}
 
 	Http struct {
-		Address string
+		Address   string
 		UrlPrefix string
 		//MaxOpenConnections int
-		Key string
-		Cert string
-		RequestsLogFile string
-		ClientCa string
-		DefaultClientCn string
+		Key                      string
+		Cert                     string
+		RequestsLogFile          string
+		ClientCa                 string
+		DefaultClientCn          string
 		UpdateForwardedForHeader bool
-		MaxHeaderSizeKbytes int
-		MaxBodySizeKbytes int64
-		MaxResponseSizeKbytes int64
-		ReadTimeoutSecs int
-		WriteTimeoutSecs int
+		MaxHeaderSizeKbytes      int
+		MaxBodySizeKbytes        int64
+		MaxResponseSizeKbytes    int64
+		ReadTimeoutSecs          int
+		WriteTimeoutSecs         int
 		//ShutdownTimeoutSecs int
-		CookiesDomain string
-		CookiesPath string
+		CookiesDomain        string
+		CookiesPath          string
 		CookiesDisableSecure bool
 	}
-	
+
 	Postgres struct {
-		Socket string
-		Port uint16
-		ServerCertificate string
-		Database string
-		UpdatesChannelName string
-		SearchPath string
-		MaxOpenConnections int
+		Socket               string
+		Port                 uint16
+		ServerCertificate    string
+		CaCertificates       string
+		Database             string
+		UpdatesChannelName   string
+		SearchPath           string
+		MaxOpenConnections   int
 		ContextParameterName string
-		RoutesTableName string
-		FtsFunctionName string
+		RoutesTableName      string
+		FtsFunctionName      string
 		StatementTimeoutSecs int
 	}
-	
+
 	Protocol struct {
 		FilterQueryName string
-		SortQueryName string
-		LimitQueryName string
+		SortQueryName   string
+		LimitQueryName  string
 	}
-	
+
 	DefaultContext map[string]string
-	
+
 	BinaryFormats []struct {
 		Extension string
-		MimeType string
+		MimeType  string
 	}
 }
 
@@ -91,18 +93,18 @@ func loadConfig(path string) {
 	//config.Http.ShutdownTimeoutSecs = 60
 	config.Postgres.ContextParameterName = "context"
 	config.Postgres.RoutesTableName = "routes"
-	
+
 	f, err := os.Open(path)
 	if err != nil {
 		log.Fatalln("Cannot open configuration file:", err)
 	}
 	defer f.Close()
-	
+
 	buf, err := ioutil.ReadAll(f)
 	if err != nil {
 		log.Fatalln("Cannot read configuration file:", err)
 	}
-	
+
 	if err := toml.Unmarshal(buf, &config); err != nil {
 		log.Fatalln("Cannot decode configuration file:", err)
 	}
@@ -145,17 +147,34 @@ func loadServerCertificate(path string) {
 		}
 
 		serverCertificate = cert
-		certPem = []byte {}
+		certPem = []byte{}
 	}
+}
+
+func loadX509Pool(caPath string) *x509.CertPool {
+	certPool := x509.NewCertPool()
+
+	if caPath != "" {
+		rootCAs, err := ioutil.ReadFile(caPath)
+		if err != nil {
+			log.Fatalln("Cannot open root CAs file:", err)
+		}
+
+		if !certPool.AppendCertsFromPEM(rootCAs) {
+			log.Fatalln("Could not load client root CAs.")
+		}
+	}
+
+	return certPool
 }
 
 func main() {
 	cmd := kingpin.MustParse(appCmdLine.Parse(os.Args[1:]))
-	
+
 	loadConfig(*configPathArg)
-	
+
 	runtime.GOMAXPROCS(config.System.Maxprocs)
-	
+
 	var tlsConfig *tls.Config
 	if config.Postgres.Socket[0] != '/' {
 		// when not using Unix sockets, then TLS is required
@@ -163,35 +182,39 @@ func main() {
 		insecureSkipVerify := false
 		var verifyPeerCertificate func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error
 		serverName := config.Postgres.Socket
+		var rootCAs *x509.CertPool
 
 		if config.Postgres.ServerCertificate != "" {
 			loadServerCertificate(config.Postgres.ServerCertificate)
 			serverName = ""
 			verifyPeerCertificate = checkServerCertificate
 			insecureSkipVerify = true
+		} else if config.Postgres.CaCertificates != "" {
+			rootCAs = loadX509Pool(config.Postgres.CaCertificates)
 		}
 
-		tlsConfig = &tls.Config {
-			InsecureSkipVerify: insecureSkipVerify,
+		tlsConfig = &tls.Config{
+			InsecureSkipVerify:    insecureSkipVerify,
 			VerifyPeerCertificate: verifyPeerCertificate,
-			ServerName: serverName,
+			ServerName:            serverName,
+			RootCAs:               rootCAs,
 		}
 	}
 
 	var handler RequestHandler
-	handler.DbConnConfig = pgx.ConnConfig {
-		Host: config.Postgres.Socket,
-		Port: config.Postgres.Port,
-		User: os.Getenv("PG_USER"),
-		Password: os.Getenv("PG_PASSWORD"),
-		Database: config.Postgres.Database,
+	handler.DbConnConfig = pgx.ConnConfig{
+		Host:      config.Postgres.Socket,
+		Port:      config.Postgres.Port,
+		User:      os.Getenv("PG_USER"),
+		Password:  os.Getenv("PG_PASSWORD"),
+		Database:  config.Postgres.Database,
 		TLSConfig: tlsConfig,
 	}
-	handler.Schema = Schema {
-		CookiesDomain: config.Http.CookiesDomain,
-		CookiesPath: config.Http.CookiesPath,
+	handler.Schema = Schema{
+		CookiesDomain:        config.Http.CookiesDomain,
+		CookiesPath:          config.Http.CookiesPath,
 		CookiesDisableSecure: config.Http.CookiesDisableSecure,
-		RoutesTableName: config.Postgres.RoutesTableName,
+		RoutesTableName:      config.Postgres.RoutesTableName,
 	}
 	handler.Verbose = config.System.Verbose
 	handler.UrlPrefix = config.Http.UrlPrefix
@@ -209,12 +232,12 @@ func main() {
 	handler.SortQueryName = config.Protocol.SortQueryName
 	handler.LimitQueryName = config.Protocol.LimitQueryName
 	handler.DefaultContext = config.DefaultContext
-	
+
 	handler.BinaryFormats = make(map[string]string)
-	for _, x := range(config.BinaryFormats) {
+	for _, x := range config.BinaryFormats {
 		handler.BinaryFormats[x.Extension] = x.MimeType
 	}
-	
+
 	switch cmd {
 	case serveCmd.FullCommand():
 		startServer(handler)
@@ -231,33 +254,23 @@ func startServer(handler RequestHandler) {
 			log.Fatalln(err)
 		}
 	}
-	
+
 	if err := handler.Load(); err != nil {
 		log.Fatalln(err)
 	}
-	
-	certPool := x509.NewCertPool()
-	if config.Http.ClientCa != "" {
-		rootCAs, err := ioutil.ReadFile(config.Http.ClientCa)
-		if err != nil {
-			log.Fatalln("Cannot open root CAs file:", err)
-		}
-		
-		if !certPool.AppendCertsFromPEM(rootCAs) {
-			log.Fatalln("Could not load client root CAs.")
-		}
-	}
-	
-	svr := http.Server {
+
+	certPool := loadX509Pool(config.Http.ClientCa)
+
+	svr := http.Server{
 		Addr:           config.Http.Address,
 		Handler:        &handler,
 		ReadTimeout:    time.Duration(config.Http.ReadTimeoutSecs) * time.Second,
 		WriteTimeout:   time.Duration(config.Http.WriteTimeoutSecs) * time.Second,
 		MaxHeaderBytes: config.Http.MaxHeaderSizeKbytes << 10,
 		// disable HTTP/2 (issue with Kubernetes probe when HTTPS scheme is enabled)
-		TLSNextProto:   make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
-		TLSConfig:      &tls.Config {
-			ClientCAs:  certPool,
+		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
+		TLSConfig: &tls.Config{
+			ClientCAs: certPool,
 		},
 	}
 
@@ -284,7 +297,7 @@ func startServer(handler RequestHandler) {
 	if config.System.Verbose {
 		log.Println("pgasus started.")
 	}
-	
+
 	if config.Http.Key != "" && config.Http.Cert != "" {
 		if err := svr.ListenAndServeTLS(config.Http.Cert, config.Http.Key); err != http.ErrServerClosed {
 			log.Fatalln(err)
@@ -294,20 +307,20 @@ func startServer(handler RequestHandler) {
 			log.Fatalln(err)
 		}
 	}
-	
+
 	<-idleConnsClosed // wait for last connections to close
 	handler.CloseRequestsLogFile()
 }
 
 func generateDocumentation(handler RequestHandler) {
 	docGen := DocumentationGenerator{
-		DbConnConfig: handler.DbConnConfig,
-		Schema: handler.Schema,
-		SearchPath: config.Postgres.SearchPath,
+		DbConnConfig:    handler.DbConnConfig,
+		Schema:          handler.Schema,
+		SearchPath:      config.Postgres.SearchPath,
 		FilterQueryName: config.Protocol.FilterQueryName,
-		SortQueryName: config.Protocol.SortQueryName,
-		LimitQueryName: config.Protocol.LimitQueryName,
+		SortQueryName:   config.Protocol.SortQueryName,
+		LimitQueryName:  config.Protocol.LimitQueryName,
 	}
-	
+
 	docGen.GenerateDocumentation(*docOutputPathArg)
 }
