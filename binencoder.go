@@ -1,6 +1,5 @@
 package main
 
-
 import (
 	"bytes"
 	"encoding/json"
@@ -13,7 +12,7 @@ import (
 type BinRecordSetWriter struct {
 	bytes.Buffer
 	MaxResponseSizeBytes int64
-	ContentType string
+	ContentType          string
 }
 
 func (w *BinRecordSetWriter) ToBytes() []byte {
@@ -110,9 +109,9 @@ func (w *BinRecordSetWriter) String(rs *RecordSet, v string) error {
 	if w.Len() > 0 {
 		return errors.New("Binary format may contain only one scalar value.")
 	}
-	
+
 	w.WriteString(v) // strings are UTF-8 encoded byte arrays in Go
-	
+
 	return w.checkSize()
 }
 
@@ -120,9 +119,9 @@ func (w *BinRecordSetWriter) Bytes(rs *RecordSet, v []byte) error {
 	if w.Len() > 0 {
 		return errors.New("Binary format may contain only one scalar value.")
 	}
-	
+
 	w.Write(v)
-	
+
 	return w.checkSize()
 }
 

@@ -3,11 +3,13 @@
 # see https://link.medium.com/Ra2kvVysZ7
 # investigate https://github.com/GoogleContainerTools/distroless later
 
-FROM golang:1.15.8-alpine3.13 AS builder
+FROM golang:1.17-alpine3.14 AS builder
 RUN apk --no-cache add ca-certificates
 
 COPY . /go/src/github.com/debackerl/pgasus
 WORKDIR /go/src/github.com/debackerl/pgasus
+# -w, strip DWARD debugging information to reduce size
+# -s, strip the Go symbol table to reduce size
 #RUN ls -lh . && go version && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -installsuffix cgo -ldflags="-w -s" -o /bin/pgasus . && ls -lh /bin/pgasus
 RUN ls -lh . && go version && GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /bin/pgasus . && ls -lh /bin/pgasus
 

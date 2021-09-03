@@ -1,14 +1,15 @@
 package main
 
 import (
-	"github.com/debackerl/queryme/go"
 	"strconv"
 	"strings"
+
+	queryme "github.com/debackerl/queryme/go"
 )
 
 // PredicateToSql converts a Predicate to its equivalent SQL form and extracts constant to a seperate array. Each referenced field is matched against a list of allowed fields.
 func PredicateToPostgreSql(sql *SqlBuilder, ftsFunction string, argumentsType map[string]ArgumentType, predicate queryme.Predicate) {
-	visitor := predicateSqlizer { Sql: sql, FtsFunction: ftsFunction, ArgumentsType: argumentsType }
+	visitor := predicateSqlizer{Sql: sql, FtsFunction: ftsFunction, ArgumentsType: argumentsType}
 
 	predicate.Accept(&visitor)
 }
@@ -29,8 +30,8 @@ func SortOrderToPostgreSql(sql *SqlBuilder, sortOrder []*queryme.SortOrder) {
 }
 
 type predicateSqlizer struct {
-	Sql *SqlBuilder
-	FtsFunction string
+	Sql           *SqlBuilder
+	FtsFunction   string
 	ArgumentsType map[string]ArgumentType
 }
 
@@ -62,7 +63,7 @@ func (s *predicateSqlizer) AppendValue(field string, value interface{}) {
 			}
 		}
 	}
-	
+
 	s.Sql.WriteValue(value)
 }
 
@@ -99,13 +100,13 @@ func (s *predicateSqlizer) VisitOr(operands []queryme.Predicate) {
 
 func (s *predicateSqlizer) VisitEq(field queryme.Field, operands []queryme.Value) {
 	f := string(field)
-	
+
 	switch len(operands) {
 	case 0:
 		s.AppendSql("false")
 	case 1:
 		s.AppendId(f)
-		
+
 		if s.isFieldArray(f) {
 			s.AppendSql("@>ARRAY[")
 			s.AppendValue(f, operands[0])
@@ -134,7 +135,7 @@ func (s *predicateSqlizer) VisitEq(field queryme.Field, operands []queryme.Value
 		} else {
 			seen := 0
 			test_null := false
-			
+
 			for _, op := range operands {
 				if op == nil {
 					test_null = true
@@ -151,7 +152,7 @@ func (s *predicateSqlizer) VisitEq(field queryme.Field, operands []queryme.Value
 			if seen > 0 {
 				s.AppendSql(")")
 			}
-			
+
 			if test_null {
 				s.AppendSql(" OR ")
 				s.AppendId(f)

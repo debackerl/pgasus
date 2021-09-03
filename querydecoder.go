@@ -1,49 +1,52 @@
 package main
 
 import (
-	"github.com/antonholmquist/jason"
-	"github.com/jackc/pgx"
 	"bytes"
 	"encoding/base64"
 	"errors"
+	"fmt"
+	"math/big"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/antonholmquist/jason"
+	"github.com/jackc/pgtype"
 )
 
 func decodeHttpBody(w http.ResponseWriter, r *http.Request, argumentsType map[string]ArgumentType, readonlyFields map[string]struct{}, maxBodySizeKbytes int64) (queries []map[string]interface{}, batch bool, err error) {
-	body := http.MaxBytesReader(w, r.Body, maxBodySizeKbytes * 1024)
-	
+	body := http.MaxBytesReader(w, r.Body, maxBodySizeKbytes*1024)
+
 	queries = make([]map[string]interface{}, 0, 1)
-	
+
 	if r.Header.Get("Content-Type") == "application/x-www-form-urlencoded" {
 		buf := new(bytes.Buffer)
 		buf.ReadFrom(body)
-		
+
 		var values url.Values
 		values, err = url.ParseQuery(buf.String())
 		if err != nil {
 			queries = nil
 			return
 		}
-		
+
 		var query map[string]interface{}
 		query, err = prepareArgumentsFromForm(values, argumentsType, readonlyFields)
 		if err != nil {
 			queries = nil
 			return
 		}
-		
+
 		queries = append(queries, query)
 	} else {
 		var value *jason.Value
-		
+
 		value, err = jason.NewValueFromReader(body)
 		if err != nil {
 			return
 		}
-		
+
 		if array, ok := value.Array(); ok == nil {
 			for _, subValue := range array {
 				if object, ok := subValue.Object(); ok == nil {
@@ -53,7 +56,7 @@ func decodeHttpBody(w http.ResponseWriter, r *http.Request, argumentsType map[st
 						queries = nil
 						return
 					}
-					
+
 					queries = append(queries, query)
 				} else {
 					err = errors.New("Invalid json value type, array must contain objects.")
@@ -67,88 +70,88 @@ func decodeHttpBody(w http.ResponseWriter, r *http.Request, argumentsType map[st
 				queries = nil
 				return
 			}
-			
+
 			queries = append(queries, query)
 			batch = false
 		} else {
 			err = errors.New("Invalid json value type, must be array or object.")
 		}
 	}
-	
+
 	return
 }
 
 func prepareArgumentsFromForm(arguments url.Values, argumentsType map[string]ArgumentType, readonlyFields map[string]struct{}) (query map[string]interface{}, err error) {
 	query = make(map[string]interface{})
-	
+
 	for key, value := range arguments {
 		key = strings.ToLower(key)
-		
+
 		if readonlyFields != nil {
 			if _, ok := readonlyFields[key]; ok {
 				continue
 			}
 		}
-		
+
 		if _, ok := argumentsType[key]; ok {
 			query[key] = value[0]
 		}
 	}
-	
+
 	return
 }
 
 func prepareArgumentsFromObject(arguments *jason.Object, argumentsType map[string]ArgumentType, readonlyFields map[string]struct{}) (query map[string]interface{}, err error) {
 	query = make(map[string]interface{})
-	
+
 	for key, value := range arguments.Map() {
 		if readonlyFields != nil {
 			if _, ok := readonlyFields[key]; ok {
 				continue
 			}
 		}
-		
+
 		if typ, ok := argumentsType[key]; ok {
 			var arg interface{}
-			
+
 			arg, err = decodeArgumentFromJsonValue(value, typ)
 			if err != nil {
 				return
 			}
-			
+
 			query[key] = arg
 		}
 	}
-	
+
 	return
 }
 
 func prepareArgumentsFromQueryString(rawQuery string, argumentsType map[string]ArgumentType) (query map[string]interface{}, err error) {
 	var values url.Values
-	
+
 	values, err = url.ParseQuery(rawQuery)
 	if err != nil {
 		return
 	}
-	
+
 	query = make(map[string]interface{})
-	
+
 	for k, vs := range values {
 		if typ, ok := argumentsType[k]; ok {
 			value, err := jason.NewValueFromBytes([]byte(vs[0]))
 			if err != nil {
 				return nil, err
 			}
-			
+
 			arg, err := decodeArgumentFromJsonValue(value, typ)
 			if err != nil {
 				return nil, err
 			}
-			
+
 			query[k] = arg
 		}
 	}
-	
+
 	return
 }
 
@@ -176,13 +179,13 @@ func decodeArgumentFromJsonValue(value *jason.Value, typ ArgumentType) (arg inte
 		case "double precision[]":
 			arg, err = valueToFloat64Array(value)
 		case "numeric", "money":
-			arg, err = valueToNumber(value)
+			arg, err = valueToNumeric(value)
 		case "numeric[]", "money[]":
-			return nil, errors.New("numeric[] and money[] encoder not supported.")
+			arg, err = valueToNumericArray(value)
 		case "character", "character varying", "text", "uuid", "date", "time without time zone", "time with time zone":
 			arg, err = value.String()
 		case "character[]", "character varying[]", "text[]", "uuid[]", "date[]", "time without time zone[]", "time with time zone[]":
-			arg, err = valueToStringArray(value, typ.ElementOid)
+			arg, err = valueToStringArray(value)
 		case "timestamp without time zone", "timestamp with time zone":
 			arg, err = valueToTime(value)
 		case "timestamp without time zone[]", "timestamp with time zone[]":
@@ -194,12 +197,12 @@ func decodeArgumentFromJsonValue(value *jason.Value, typ ArgumentType) (arg inte
 		case "hstore":
 			arg, err = valueToHstore(value)
 		case "hstore[]":
-			return nil, errors.New("hstore[] encoder not supported.")
+			arg, err = valueToHstoreArray(value)
 		default:
 			arg, err = valueFallback(value)
 		}
 	}
-	
+
 	return
 }
 
@@ -210,26 +213,35 @@ func valueFallback(value *jason.Value) (res string, err error) {
 		var raw []byte
 		raw, err = value.Marshal()
 		if err == nil {
+			// string with JSON content
 			res = string(raw)
 		}
 	}
-	
+
 	return
 }
 
-func valueToNumber(value *jason.Value) (res string, err error) {
+func valueToNumeric(value *jason.Value) (res pgtype.Numeric, err error) {
 	if n, err := value.Number(); err == nil {
-		res = n.String()
+		i64, convErr := n.Int64()
+		if convErr != nil {
+			err = errors.New(fmt.Sprintf("Invalid JSON value for numeric data type: %s", n.String()))
+		} else {
+			res = pgtype.Numeric{
+				Int:    big.NewInt(i64),
+				Status: pgtype.Present,
+			}
+		}
 	} else {
 		var s string
 		s, err = value.String()
 		if err != nil {
 			err = errors.New("JSON number or string expected.")
 		} else {
-			res = s
+			res.Set(s)
 		}
 	}
-	
+
 	return
 }
 
@@ -241,30 +253,37 @@ func valueToTime(value *jason.Value) (res time.Time, err error) {
 	} else {
 		res, err = time.Parse(time.RFC3339, s)
 	}
-	
+
 	return
 }
 
-func valueToBytea(value *jason.Value) (res []byte, err error) {
+func valueToBytea(value *jason.Value) (res pgtype.Bytea, err error) {
 	var s string
 	s, err = value.String()
 	if err != nil {
 		err = errors.New("JSON string expected.")
 	} else {
-		res, err = base64.StdEncoding.DecodeString(s)
+		var bytes []byte
+		bytes, err = base64.StdEncoding.DecodeString(s)
+		if err == nil {
+			res = pgtype.Bytea{
+				Bytes:  bytes,
+				Status: pgtype.Present,
+			}
+		}
 	}
-	
+
 	return
 }
 
-func valueToHstore(value *jason.Value) (hstore pgx.NullHstore, err error) {
+func valueToHstore(value *jason.Value) (hstore pgtype.Hstore, err error) {
 	if object, ok := value.Object(); ok == nil {
-		hstore.Hstore = make(map[string]pgx.NullString)
+		hstore.Map = make(map[string]pgtype.Text)
 		for key, value := range object.Map() {
-			var ns pgx.NullString
-			
+			var ns pgtype.Text
+
 			if value.Null() == nil {
-				
+
 			} else {
 				ns.String, err = value.String()
 				if err != nil {
@@ -274,27 +293,27 @@ func valueToHstore(value *jason.Value) (hstore pgx.NullHstore, err error) {
 					if err != nil {
 						return
 					}
-					
+
 					ns.String = string(raw)
 				}
-				
-				ns.Valid = true
+
+				ns.Status = pgtype.Present
 			}
-			
-			hstore.Hstore[key] = ns
+
+			hstore.Map[key] = ns
 		}
-		
-		hstore.Valid = true
+
+		hstore.Status = pgtype.Present
 	} else {
 		err = errors.New("JSON object expected.")
 	}
-	
+
 	return
 }
 
 func valueToBoolArray(value *jason.Value) (array []bool, err error) {
 	if values, ok := value.Array(); ok == nil {
-		array = make([]bool, 0, 8)
+		array = make([]bool, 0, len(values))
 		for _, subValue := range values {
 			var converted bool
 			converted, err = subValue.Boolean()
@@ -307,13 +326,13 @@ func valueToBoolArray(value *jason.Value) (array []bool, err error) {
 	} else {
 		err = errors.New("JSON array expected.")
 	}
-	
+
 	return
 }
 
 func valueToInt16Array(value *jason.Value) (array []int16, err error) {
 	if values, ok := value.Array(); ok == nil {
-		array = make([]int16, 0, 8)
+		array = make([]int16, 0, len(values))
 		for _, subValue := range values {
 			var converted int64
 			converted, err = subValue.Int64()
@@ -326,13 +345,13 @@ func valueToInt16Array(value *jason.Value) (array []int16, err error) {
 	} else {
 		err = errors.New("JSON array expected.")
 	}
-	
+
 	return
 }
 
 func valueToInt32Array(value *jason.Value) (array []int32, err error) {
 	if values, ok := value.Array(); ok == nil {
-		array = make([]int32, 0, 8)
+		array = make([]int32, 0, len(values))
 		for _, subValue := range values {
 			var converted int64
 			converted, err = subValue.Int64()
@@ -345,13 +364,13 @@ func valueToInt32Array(value *jason.Value) (array []int32, err error) {
 	} else {
 		err = errors.New("JSON array expected.")
 	}
-	
+
 	return
 }
 
 func valueToInt64Array(value *jason.Value) (array []int64, err error) {
 	if values, ok := value.Array(); ok == nil {
-		array = make([]int64, 0, 8)
+		array = make([]int64, 0, len(values))
 		for _, subValue := range values {
 			var converted int64
 			converted, err = subValue.Int64()
@@ -364,13 +383,13 @@ func valueToInt64Array(value *jason.Value) (array []int64, err error) {
 	} else {
 		err = errors.New("JSON array expected.")
 	}
-	
+
 	return
 }
 
 func valueToFloat32Array(value *jason.Value) (array []float32, err error) {
 	if values, ok := value.Array(); ok == nil {
-		array = make([]float32, 0, 8)
+		array = make([]float32, 0, len(values))
 		for _, subValue := range values {
 			var converted float64
 			converted, err = subValue.Float64()
@@ -383,13 +402,13 @@ func valueToFloat32Array(value *jason.Value) (array []float32, err error) {
 	} else {
 		err = errors.New("JSON array expected.")
 	}
-	
+
 	return
 }
 
 func valueToFloat64Array(value *jason.Value) (array []float64, err error) {
 	if values, ok := value.Array(); ok == nil {
-		array = make([]float64, 0, 8)
+		array = make([]float64, 0, len(values))
 		for _, subValue := range values {
 			var converted float64
 			converted, err = subValue.Float64()
@@ -402,32 +421,65 @@ func valueToFloat64Array(value *jason.Value) (array []float64, err error) {
 	} else {
 		err = errors.New("JSON array expected.")
 	}
-	
+
 	return
 }
 
-func valueToStringArray(value *jason.Value, elementType pgx.Oid) (array StringArray, err error) {
+func valueToNumericArray(value *jason.Value) (array pgtype.NumericArray, err error) {
 	if values, ok := value.Array(); ok == nil {
-		strings := make([]string, 0, 8)
+		elements := make([]pgtype.Numeric, 0, len(values))
+		for _, subValue := range values {
+			var converted pgtype.Numeric
+			converted, err = valueToNumeric(subValue)
+			if err != nil {
+				elements = nil
+				return
+			}
+			elements = append(elements, converted)
+		}
+
+		array = pgtype.NumericArray{
+			Elements:   elements,
+			Dimensions: []pgtype.ArrayDimension{{Length: int32(len(elements)), LowerBound: 1}},
+			Status:     pgtype.Present,
+		}
+	} else {
+		err = errors.New("JSON array expected.")
+	}
+
+	return
+}
+
+func valueToStringArray(value *jason.Value) (array pgtype.TextArray, err error) {
+	if values, ok := value.Array(); ok == nil {
+		strings := make([]pgtype.Text, 0, len(values))
 		for _, subValue := range values {
 			var converted string
 			converted, err = subValue.String()
 			if err != nil {
 				return
 			}
-			strings = append(strings, converted)
+			strings = append(strings, pgtype.Text{
+				String: converted,
+				Status: pgtype.Present,
+			})
 		}
-		array = StringArray { ElementType: elementType, Values: strings }
+
+		array = pgtype.TextArray{
+			Elements:   strings,
+			Dimensions: []pgtype.ArrayDimension{{Length: int32(len(strings)), LowerBound: 1}},
+			Status:     pgtype.Present,
+		}
 	} else {
 		err = errors.New("JSON array expected.")
 	}
-	
+
 	return
 }
 
 func valueToArray(value *jason.Value, converter func(*jason.Value) (interface{}, error)) (array []interface{}, err error) {
 	if values, ok := value.Array(); ok == nil {
-		array = make([]interface{}, 0, 8)
+		array = make([]interface{}, 0, len(values))
 		for _, subValue := range values {
 			var converted interface{}
 			converted, err = converter(subValue)
@@ -440,13 +492,13 @@ func valueToArray(value *jason.Value, converter func(*jason.Value) (interface{},
 	} else {
 		err = errors.New("JSON array expected.")
 	}
-	
+
 	return
 }
 
 func valueToTimeArray(value *jason.Value) (array []time.Time, err error) {
 	if values, ok := value.Array(); ok == nil {
-		array = make([]time.Time, 0, 8)
+		array = make([]time.Time, 0, len(values))
 		for _, subValue := range values {
 			var converted time.Time
 			converted, err = valueToTime(subValue)
@@ -459,62 +511,56 @@ func valueToTimeArray(value *jason.Value) (array []time.Time, err error) {
 	} else {
 		err = errors.New("JSON array expected.")
 	}
-	
+
 	return
 }
 
-func valueToByteaArray(value *jason.Value) (array ByteaArray, err error) {
+func valueToByteaArray(value *jason.Value) (array pgtype.ByteaArray, err error) {
 	if values, ok := value.Array(); ok == nil {
-		array = make(ByteaArray, 0, 8)
+		elements := make([]pgtype.Bytea, 0, len(values))
 		for _, subValue := range values {
-			var converted []byte
+			var converted pgtype.Bytea
 			converted, err = valueToBytea(subValue)
 			if err != nil {
-				array = nil
+				elements = nil
 				return
 			}
-			array = append(array, converted)
+			elements = append(elements, converted)
+		}
+
+		array = pgtype.ByteaArray{
+			Elements:   elements,
+			Dimensions: []pgtype.ArrayDimension{{Length: int32(len(elements)), LowerBound: 1}},
+			Status:     pgtype.Present,
 		}
 	} else {
 		err = errors.New("JSON array expected.")
 	}
-	
+
 	return
 }
 
-type ByteaArray [][]byte
+func valueToHstoreArray(value *jason.Value) (array pgtype.HstoreArray, err error) {
+	if values, ok := value.Array(); ok == nil {
+		elements := make([]pgtype.Hstore, 0, len(values))
+		for _, subValue := range values {
+			var converted pgtype.Hstore
+			converted, err = valueToHstore(subValue)
+			if err != nil {
+				elements = nil
+				return
+			}
+			elements = append(elements, converted)
+		}
 
-func (a ByteaArray) Encode(w *pgx.WriteBuf, oid pgx.Oid) error {
-	if oid != 1001 {
-		return errors.New("Invalid oid expected for bytea array.")
+		array = pgtype.HstoreArray{
+			Elements:   elements,
+			Dimensions: []pgtype.ArrayDimension{{Length: int32(len(elements)), LowerBound: 1}},
+			Status:     pgtype.Present,
+		}
+	} else {
+		err = errors.New("JSON array expected.")
 	}
-	
-	n := len(a)
-	
-	total := 0
-	for _, v := range a {
-		total += 4 + len(v)
-	}
-	
-	writeBinaryArrayHeader(w, total, n, pgx.ByteaOid)
-	
-	for _, v := range a {
-		w.WriteInt32(int32(len(v)))
-		w.WriteBytes(v)
-	}
-	
-	return nil
-}
 
-func (a ByteaArray) FormatCode() int16 {
-	return pgx.BinaryFormatCode
-}
-
-func writeBinaryArrayHeader(w *pgx.WriteBuf, totalSize int, numElements int, elementOid pgx.Oid) {
-	w.WriteInt32(int32(20 + totalSize))
-	w.WriteInt32(1)
-	w.WriteInt32(0)
-	w.WriteInt32(int32(elementOid))
-	w.WriteInt32(int32(numElements))
-	w.WriteInt32(1)
+	return
 }

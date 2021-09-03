@@ -15,7 +15,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/jackc/pgx"
+	"github.com/jackc/pgx/v4"
 	"github.com/naoina/toml"
 	"gopkg.in/alecthomas/kingpin.v1"
 )
@@ -64,7 +64,7 @@ var config struct {
 		Database             string
 		UpdatesChannelName   string
 		SearchPath           string
-		MaxOpenConnections   int
+		MaxOpenConnections   int32
 		ContextParameterName string
 		RoutesTableName      string
 		FtsFunctionName      string
@@ -199,17 +199,19 @@ func main() {
 			ServerName:            serverName,
 			RootCAs:               rootCAs,
 		}
+		tlsConfig = nil
 	}
 
 	var handler RequestHandler
-	handler.DbConnConfig = pgx.ConnConfig{
-		Host:      config.Postgres.Socket,
-		Port:      config.Postgres.Port,
-		User:      os.Getenv("PG_USER"),
-		Password:  os.Getenv("PG_PASSWORD"),
-		Database:  config.Postgres.Database,
-		TLSConfig: tlsConfig,
-	}
+	// as recommended by config, _ := pgxpool.ParseConfig("")
+	handler.DbConnConfig, _ = pgx.ParseConfig("")
+	handler.DbConnConfig.Host = config.Postgres.Socket
+	handler.DbConnConfig.Port = config.Postgres.Port
+	handler.DbConnConfig.User = os.Getenv("PG_USER")
+	handler.DbConnConfig.Password = os.Getenv("PG_PASSWORD")
+	handler.DbConnConfig.Database = config.Postgres.Database
+	handler.DbConnConfig.TLSConfig = tlsConfig
+
 	handler.Schema = Schema{
 		CookiesDomain:        config.Http.CookiesDomain,
 		CookiesPath:          config.Http.CookiesPath,

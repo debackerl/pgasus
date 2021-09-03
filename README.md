@@ -257,3 +257,16 @@ pgasus --config pgasus.conf
 ```
 
 Please have a look at the sample pgasus.conf file which is written in [TOML](https://github.com/toml-lang/toml) format.
+
+### Development
+
+Include a new library:
+`go get -u github.com/jackc/pgx/v4`
+
+This will add a new `require` statement in `go.mod` file.
+
+To update the `vendor` directory:
+`go mod vendor`
+
+To test the container:
+`docker run --rm --network="host" -e PG_USER=postgres -e PG_PASSWORD=pw -v $(pwd)/pgasus.conf:/etc/pgasus.conf:ro debackerl/pgasus`

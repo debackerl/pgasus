@@ -1,140 +1,36 @@
-// Copyright (c) 2015 Laurent Debacker
-// Copyright (c) 2013 Jack Christensen
-// 
-// MIT License
-// 
-// Permission is hereby granted, free of charge, to any person obtaining
-// a copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to
-// permit persons to whom the Software is furnished to do so, subject to
-// the following conditions:
-// 
-// The above copyright notice and this permission notice shall be
-// included in all copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-// LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-// OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-// WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 package main
 
 import (
-	"github.com/jackc/pgx"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log"
-	"math"
-	"net"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgproto3/v2"
+	"github.com/jackc/pgtype"
+	"github.com/jackc/pgx/v4"
 )
-
-type Records []map[string]interface{}
-
-func readRecords(dst RecordSetVisitor, singleRow bool, rows *pgx.Rows) error {
-	rs := RecordSet {
-		Visitor: dst,
-		Columns: rows.FieldDescriptions(),
-		IncludeColumnNames: true,
-	}
-	
-	count := len(rs.Columns)
-	scanners := make([]interface{}, count)
-	
-	for i := 0; i < count; i++ {
-		scanners[i] = rs.GetColumnScanner(i)
-	}
-	
-	if !singleRow {
-		if err := rs.Visitor.BeginRecordSet(&rs); err != nil {
-			return err
-		}
-	}
-	
-	for rows.Next() {
-		if err := rs.Visitor.BeginRecord(&rs); err != nil {
-			return err
-		}
-		
-		if err := rows.Scan(scanners...); err != nil {
-			return err
-		}
-		
-		if err := rs.Visitor.EndRecord(&rs); err != nil {
-			return err
-		}
-	}
-	
-	if err := rows.Err(); err != nil {
-		if(strings.Contains(err.Error(), "SQLSTATE 57014")) {
-			// 57014 = query_canceled. When a timeout occurs in a function,
-			// it is not always properly cleaned up while exiting.
-			// Subsequent calls may not respond while reusing connection.
-			log.Println("Closing connection following query_canceled error.4")
-			rows.Conn().Close()
-		}
-		return err
-	}
-	
-	if !singleRow {
-		if err := rs.Visitor.EndRecordSet(&rs); err != nil {
-			return err
-		}
-	}
-	
-	return nil
-}
-
-func readScalar(dst RecordSetVisitor, rows *pgx.Rows) error {
-	rs := RecordSet {
-		Visitor: dst,
-		Columns: rows.FieldDescriptions(),
-		IncludeColumnNames: false,
-	}
-	
-	if rows.Next() {
-		if err := rows.Scan(rs.GetColumnScanner(0)); err != nil {
-			return err
-		}
-	} else {
-		if(strings.Contains(rows.Err().Error(), "SQLSTATE 57014")) {
-			// 57014 = query_canceled. When a timeout occurs in a function,
-			// it is not always properly cleaned up while exiting.
-			// Subsequent calls may not respond while reusing connection.
-			log.Println("Closing connection following query_canceled error.")
-			rows.Conn().Close()
-		}
-		return rows.Err()
-	}
-	
-	return nil
-}
 
 type RecordSetVisitor interface {
 	BeginBatch() error
 	EndBatch() error
-	
+
 	BeginRecordSet(rs *RecordSet) error
 	EndRecordSet(rs *RecordSet) error
-	
+
 	BeginRecord(rs *RecordSet) error
 	EndRecord(rs *RecordSet) error
-	
+
 	BeginColumn(rs *RecordSet) error
 	EndColumn(rs *RecordSet) error
-	
+
 	BeginArray(rs *RecordSet, size int) error
 	EndArray(rs *RecordSet) error
-	
+
 	BeginObject(rs *RecordSet) error
 	EndObject(rs *RecordSet) error
-	
+
 	Null(rs *RecordSet) error
 	Bool(rs *RecordSet, v bool) error
 	Integer(rs *RecordSet, v int64) error
@@ -147,34 +43,775 @@ type RecordSetVisitor interface {
 	Json(rs *RecordSet, v json.RawMessage) error
 }
 
-type columnScanner struct {
-	RecordSet *RecordSet
-	Index int
+type Field interface {
+	DbValue() interface{}
+	Accept(rs *RecordSet, visitor RecordSetVisitor)
 }
 
-func (cs *columnScanner) Scan(r *pgx.ValueReader) error {
-	return cs.RecordSet.scan(cs.Index, r)
+type BoolField struct {
+	pgtype.Bool
+}
+
+func (f *BoolField) DbValue() interface{} {
+	return &f.Bool
+}
+
+func (f *BoolField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		visitor.Bool(rs, f.Bool.Bool)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type BoolArrayField struct {
+	pgtype.BoolArray
+}
+
+func (f *BoolArrayField) DbValue() interface{} {
+	return &f.BoolArray
+}
+
+func (f *BoolArrayField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		elements := f.Elements
+		visitor.BeginArray(rs, len(elements))
+		for _, element := range elements {
+			if element.Status == pgtype.Present {
+				visitor.Bool(rs, element.Bool)
+			} else {
+				visitor.Null(rs)
+			}
+		}
+		visitor.EndArray(rs)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type Int2Field struct {
+	pgtype.Int2
+}
+
+func (f *Int2Field) DbValue() interface{} {
+	return &f.Int2
+}
+
+func (f *Int2Field) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		visitor.Integer(rs, int64(f.Int2.Int))
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type Int2ArrayField struct {
+	pgtype.Int2Array
+}
+
+func (f *Int2ArrayField) DbValue() interface{} {
+	return &f.Int2Array
+}
+
+func (f *Int2ArrayField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		elements := f.Elements
+		visitor.BeginArray(rs, len(elements))
+		for _, element := range elements {
+			if element.Status == pgtype.Present {
+				visitor.Integer(rs, int64(element.Int))
+			} else {
+				visitor.Null(rs)
+			}
+		}
+		visitor.EndArray(rs)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type Int4Field struct {
+	pgtype.Int4
+}
+
+func (f *Int4Field) DbValue() interface{} {
+	return &f.Int4
+}
+
+func (f *Int4Field) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		visitor.Integer(rs, int64(f.Int4.Int))
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type Int4ArrayField struct {
+	pgtype.Int4Array
+}
+
+func (f *Int4ArrayField) DbValue() interface{} {
+	return &f.Int4Array
+}
+
+func (f *Int4ArrayField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		elements := f.Elements
+		visitor.BeginArray(rs, len(elements))
+		for _, element := range elements {
+			if element.Status == pgtype.Present {
+				visitor.Integer(rs, int64(element.Int))
+			} else {
+				visitor.Null(rs)
+			}
+		}
+		visitor.EndArray(rs)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type Int8Field struct {
+	pgtype.Int8
+}
+
+func (f *Int8Field) DbValue() interface{} {
+	return &f.Int8
+}
+
+func (f *Int8Field) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		visitor.Integer(rs, f.Int8.Int)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type Int8ArrayField struct {
+	pgtype.Int8Array
+}
+
+func (f *Int8ArrayField) DbValue() interface{} {
+	return &f.Int8Array
+}
+
+func (f *Int8ArrayField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		elements := f.Elements
+		visitor.BeginArray(rs, len(elements))
+		for _, element := range elements {
+			if element.Status == pgtype.Present {
+				visitor.Integer(rs, element.Int)
+			} else {
+				visitor.Null(rs)
+			}
+		}
+		visitor.EndArray(rs)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type Float4Field struct {
+	pgtype.Float4
+}
+
+func (f *Float4Field) DbValue() interface{} {
+	return &f.Float4
+}
+
+func (f *Float4Field) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		visitor.Float(rs, float64(f.Float4.Float))
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type Float4ArrayField struct {
+	pgtype.Float4Array
+}
+
+func (f *Float4ArrayField) DbValue() interface{} {
+	return &f.Float4Array
+}
+
+func (f *Float4ArrayField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		elements := f.Elements
+		visitor.BeginArray(rs, len(elements))
+		for _, element := range elements {
+			if element.Status == pgtype.Present {
+				visitor.Float(rs, float64(element.Float))
+			} else {
+				visitor.Null(rs)
+			}
+		}
+		visitor.EndArray(rs)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type Float8Field struct {
+	pgtype.Float8
+}
+
+func (f *Float8Field) DbValue() interface{} {
+	return &f.Float8
+}
+
+func (f *Float8Field) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		visitor.Float(rs, f.Float8.Float)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type Float8ArrayField struct {
+	pgtype.Float8Array
+}
+
+func (f *Float8ArrayField) DbValue() interface{} {
+	return &f.Float8Array
+}
+
+func (f *Float8ArrayField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		elements := f.Elements
+		visitor.BeginArray(rs, len(elements))
+		for _, element := range elements {
+			if element.Status == pgtype.Present {
+				visitor.Float(rs, element.Float)
+			} else {
+				visitor.Null(rs)
+			}
+		}
+		visitor.EndArray(rs)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+func numericToString(n *pgtype.Numeric) string {
+	if n.NaN {
+		return "NaN"
+	}
+
+	s := n.Int.String()
+	if n.Exp == 0 {
+		return s
+	}
+
+	var b strings.Builder
+	if n.Exp > 0 {
+		b.WriteString(s)
+		for i := int32(0); i < n.Exp; i++ {
+			b.WriteRune('0')
+		}
+	} else {
+		p := len(s) + int(n.Exp)
+		b.WriteString(s[:p])
+		b.WriteRune('.')
+		b.WriteString(s[p:])
+	}
+	return b.String()
+}
+
+type NumericField struct {
+	pgtype.Numeric
+}
+
+func (f *NumericField) DbValue() interface{} {
+	return &f.Numeric
+}
+
+func (f *NumericField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		visitor.Numeric(rs, numericToString(&f.Numeric))
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type NumericArrayField struct {
+	pgtype.NumericArray
+}
+
+func (f *NumericArrayField) DbValue() interface{} {
+	return &f.NumericArray
+}
+
+func (f *NumericArrayField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		elements := f.Elements
+		visitor.BeginArray(rs, len(elements))
+		for _, element := range elements {
+			if element.Status == pgtype.Present {
+				visitor.Numeric(rs, numericToString(&element))
+			} else {
+				visitor.Null(rs)
+			}
+		}
+		visitor.EndArray(rs)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+func inetToString(i *pgtype.Inet) string {
+	ip := i.IPNet
+	ones, bits := ip.Mask.Size()
+
+	if ones == bits {
+		return ip.IP.String()
+	}
+
+	return ip.String()
+}
+
+type InetField struct {
+	pgtype.Inet
+}
+
+func (f *InetField) DbValue() interface{} {
+	return &f.Inet
+}
+
+func (f *InetField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		visitor.String(rs, inetToString(&f.Inet))
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type InetArrayField struct {
+	pgtype.InetArray
+}
+
+func (f *InetArrayField) DbValue() interface{} {
+	return &f.InetArray
+}
+
+func (f *InetArrayField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		elements := f.Elements
+		visitor.BeginArray(rs, len(elements))
+		for _, element := range elements {
+			if element.Status == pgtype.Present {
+				visitor.String(rs, inetToString(&element))
+			} else {
+				visitor.Null(rs)
+			}
+		}
+		visitor.EndArray(rs)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type CIDRField struct {
+	pgtype.CIDR
+}
+
+func (f *CIDRField) DbValue() interface{} {
+	return &f.CIDR
+}
+
+func (f *CIDRField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		visitor.String(rs, f.CIDR.IPNet.String())
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type CIDRArrayField struct {
+	pgtype.CIDRArray
+}
+
+func (f *CIDRArrayField) DbValue() interface{} {
+	return &f.CIDRArray
+}
+
+func (f *CIDRArrayField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		elements := f.Elements
+		visitor.BeginArray(rs, len(elements))
+		for _, element := range elements {
+			if element.Status == pgtype.Present {
+				visitor.String(rs, element.IPNet.String())
+			} else {
+				visitor.Null(rs)
+			}
+		}
+		visitor.EndArray(rs)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type TimestampField struct {
+	pgtype.Timestamp
+}
+
+func (f *TimestampField) DbValue() interface{} {
+	return &f.Timestamp
+}
+
+func (f *TimestampField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		visitor.DateTime(rs, f.Timestamp.Time)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type TimestampArrayField struct {
+	pgtype.TimestampArray
+}
+
+func (f *TimestampArrayField) DbValue() interface{} {
+	return &f.TimestampArray
+}
+
+func (f *TimestampArrayField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		elements := f.Elements
+		visitor.BeginArray(rs, len(elements))
+		for _, element := range elements {
+			if element.Status == pgtype.Present {
+				visitor.DateTime(rs, element.Time)
+			} else {
+				visitor.Null(rs)
+			}
+		}
+		visitor.EndArray(rs)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type TimestamptzField struct {
+	pgtype.Timestamptz
+}
+
+func (f *TimestamptzField) DbValue() interface{} {
+	return &f.Timestamptz
+}
+
+func (f *TimestamptzField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		visitor.DateTime(rs, f.Timestamptz.Time)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type TimestamptzArrayField struct {
+	pgtype.TimestamptzArray
+}
+
+func (f *TimestamptzArrayField) DbValue() interface{} {
+	return &f.TimestamptzArray
+}
+
+func (f *TimestamptzArrayField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		elements := f.Elements
+		visitor.BeginArray(rs, len(elements))
+		for _, element := range elements {
+			if element.Status == pgtype.Present {
+				visitor.DateTime(rs, element.Time)
+			} else {
+				visitor.Null(rs)
+			}
+		}
+		visitor.EndArray(rs)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type DateField struct {
+	pgtype.Date
+}
+
+func (f *DateField) DbValue() interface{} {
+	return &f.Date
+}
+
+func (f *DateField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		visitor.Date(rs, f.Date.Time)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type DateArrayField struct {
+	pgtype.DateArray
+}
+
+func (f *DateArrayField) DbValue() interface{} {
+	return &f.DateArray
+}
+
+func (f *DateArrayField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		elements := f.Elements
+		visitor.BeginArray(rs, len(elements))
+		for _, element := range elements {
+			if element.Status == pgtype.Present {
+				visitor.Date(rs, element.Time)
+			} else {
+				visitor.Null(rs)
+			}
+		}
+		visitor.EndArray(rs)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type TextField struct {
+	pgtype.Text
+}
+
+func (f *TextField) DbValue() interface{} {
+	return &f.Text
+}
+
+func (f *TextField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		visitor.String(rs, f.Text.String)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type TextArrayField struct {
+	pgtype.TextArray
+}
+
+func (f *TextArrayField) DbValue() interface{} {
+	return &f.TextArray
+}
+
+func (f *TextArrayField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		elements := f.Elements
+		visitor.BeginArray(rs, len(elements))
+		for _, element := range elements {
+			if element.Status == pgtype.Present {
+				visitor.String(rs, element.String)
+			} else {
+				visitor.Null(rs)
+			}
+		}
+		visitor.EndArray(rs)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type VarcharField struct {
+	pgtype.Varchar
+}
+
+func (f *VarcharField) DbValue() interface{} {
+	return &f.Varchar
+}
+
+func (f *VarcharField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		visitor.String(rs, f.Varchar.String)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type VarcharArrayField struct {
+	pgtype.VarcharArray
+}
+
+func (f *VarcharArrayField) DbValue() interface{} {
+	return &f.VarcharArray
+}
+
+func (f *VarcharArrayField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		elements := f.Elements
+		visitor.BeginArray(rs, len(elements))
+		for _, element := range elements {
+			if element.Status == pgtype.Present {
+				visitor.String(rs, element.String)
+			} else {
+				visitor.Null(rs)
+			}
+		}
+		visitor.EndArray(rs)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type FieldBuilder func() Field
+
+var fieldsByOid map[uint32]FieldBuilder
+
+func init() {
+	fieldsByOid := make(map[uint32]FieldBuilder)
+	fieldsByOid[pgtype.BoolOID] = func() Field { return &BoolField{} }
+	fieldsByOid[pgtype.BoolArrayOID] = func() Field { return &BoolArrayField{} }
+	fieldsByOid[pgtype.Int2OID] = func() Field { return &Int2Field{} }
+	fieldsByOid[pgtype.Int2ArrayOID] = func() Field { return &Int2ArrayField{} }
+	fieldsByOid[pgtype.Int4OID] = func() Field { return &Int4Field{} }
+	fieldsByOid[pgtype.Int4ArrayOID] = func() Field { return &Int4ArrayField{} }
+	fieldsByOid[pgtype.Int8OID] = func() Field { return &Int8Field{} }
+	fieldsByOid[pgtype.Int8ArrayOID] = func() Field { return &Int8ArrayField{} }
+	fieldsByOid[pgtype.Float4OID] = func() Field { return &Float4Field{} }
+	fieldsByOid[pgtype.Float4ArrayOID] = func() Field { return &Float4ArrayField{} }
+	fieldsByOid[pgtype.Float8OID] = func() Field { return &Float8Field{} }
+	fieldsByOid[pgtype.Float8ArrayOID] = func() Field { return &Float8ArrayField{} }
+	fieldsByOid[pgtype.NumericOID] = func() Field { return &NumericField{} }
+	fieldsByOid[pgtype.NumericArrayOID] = func() Field { return &NumericArrayField{} }
+	fieldsByOid[pgtype.InetOID] = func() Field { return &InetField{} }
+	fieldsByOid[pgtype.InetArrayOID] = func() Field { return &InetArrayField{} }
+	fieldsByOid[pgtype.CIDROID] = func() Field { return &CIDRField{} }
+	fieldsByOid[pgtype.CIDRArrayOID] = func() Field { return &CIDRArrayField{} }
+	fieldsByOid[pgtype.TimestampOID] = func() Field { return &TimestampField{} }
+	fieldsByOid[pgtype.TimestampArrayOID] = func() Field { return &TimestampArrayField{} }
+	fieldsByOid[pgtype.TimestamptzOID] = func() Field { return &TimestamptzField{} }
+	fieldsByOid[pgtype.TimestamptzArrayOID] = func() Field { return &TimestamptzArrayField{} }
+	fieldsByOid[pgtype.DateOID] = func() Field { return &DateField{} }
+	fieldsByOid[pgtype.DateArrayOID] = func() Field { return &DateArrayField{} }
+	fieldsByOid[pgtype.TextOID] = func() Field { return &TextField{} }
+	fieldsByOid[pgtype.TextArrayOID] = func() Field { return &TextArrayField{} }
+	fieldsByOid[pgtype.VarcharOID] = func() Field { return &VarcharField{} }
+	fieldsByOid[pgtype.VarcharArrayOID] = func() Field { return &VarcharArrayField{} }
+}
+
+func readRecords(dst RecordSetVisitor, singleRow bool, rows pgx.Rows) error {
+	rs := RecordSet{
+		Visitor:            dst,
+		Columns:            rows.FieldDescriptions(),
+		IncludeColumnNames: true,
+	}
+
+	count := len(rs.Columns)
+	fields := make([]Field, count)
+	values := make([]interface{}, count)
+
+	for i := 0; i < count; i++ {
+		var found bool
+		var builder FieldBuilder
+		oid := rs.Columns[i].DataTypeOID
+		// our own copy of a Field is done below
+		if builder, found = fieldsByOid[oid]; !found {
+			return errors.New(fmt.Sprintf("Unknown oid: %i", oid))
+		}
+
+		fields[i] = builder()
+		values[i] = fields[i].DbValue()
+	}
+
+	if !singleRow {
+		if err := rs.Visitor.BeginRecordSet(&rs); err != nil {
+			return err
+		}
+	}
+
+	for rows.Next() {
+		if err := rs.Visitor.BeginRecord(&rs); err != nil {
+			return err
+		}
+
+		if err := rows.Scan(values...); err != nil {
+			return err
+		}
+
+		for i := 0; i < count; i++ {
+			fields[i].Accept(&rs, dst)
+		}
+
+		if err := rs.Visitor.EndRecord(&rs); err != nil {
+			return err
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if !singleRow {
+		if err := rs.Visitor.EndRecordSet(&rs); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func readScalar(dst RecordSetVisitor, rows pgx.Rows) error {
+	rs := RecordSet{
+		Visitor:            dst,
+		Columns:            rows.FieldDescriptions(),
+		IncludeColumnNames: false,
+	}
+
+	oid := rs.Columns[0].DataTypeOID
+	var found bool
+	var builder FieldBuilder
+	// our own copy of a Field is done below
+	if builder, found = fieldsByOid[oid]; !found {
+		return errors.New(fmt.Sprintf("Unknown oid: %i", oid))
+	}
+
+	field := builder()
+
+	if rows.Next() {
+		if err := rows.Scan(field.DbValue()); err != nil {
+			return err
+		}
+
+		field.Accept(&rs, dst)
+	} else {
+		return rows.Err()
+	}
+
+	return nil
+}
+
+type columnScanner struct {
+	RecordSet *RecordSet
+	Index     int
 }
 
 type RecordSet struct {
-	Visitor RecordSetVisitor
-	Columns []pgx.FieldDescription
+	Visitor            RecordSetVisitor
+	Columns            []pgproto3.FieldDescription
 	IncludeColumnNames bool
-	
+
 	curCol int
 }
 
 func VisitRowsAffectedRecordSet(visitor RecordSetVisitor, rowsAffected int64) error {
-	rs := RecordSet {
+	rs := RecordSet{
 		Visitor: visitor,
-		Columns: []pgx.FieldDescription{ pgx.FieldDescription{
-			Name: "RowsAffected",
-			DataType: pgx.Int8Oid,
-			DataTypeSize: 8,
-			DataTypeName: "int8",
+		Columns: []pgproto3.FieldDescription{pgproto3.FieldDescription{
+			Name:                 []byte("RowsAffected"),
+			DataTypeOID:          pgtype.Int8OID,
+			DataTypeSize:         8,
+			TableOID:             0,
+			TableAttributeNumber: 0,
+			TypeModifier:         -1,
+			Format:               0,
 		}},
 	}
-	
+
 	if err := rs.Visitor.BeginRecordSet(&rs); err != nil {
 		return err
 	}
@@ -196,498 +833,10 @@ func VisitRowsAffectedRecordSet(visitor RecordSetVisitor, rowsAffected int64) er
 	if err := rs.Visitor.EndRecordSet(&rs); err != nil {
 		return err
 	}
-	
+
 	return nil
 }
 
-func (rs *RecordSet) GetColumnScanner(i int) pgx.Scanner {
-	return &columnScanner {
-		RecordSet: rs,
-		Index: i,
-	}
-}
-
-func (rs *RecordSet) CurrentColumn() (int, *pgx.FieldDescription) {
+func (rs *RecordSet) CurrentColumn() (int, *pgproto3.FieldDescription) {
 	return rs.curCol, &rs.Columns[rs.curCol]
-}
-
-func (rs *RecordSet) scan(col int, vr *pgx.ValueReader) (err error) {
-	t := vr.Type()
-	v := rs.Visitor
-	
-	rs.curCol = col
-	
-	if rs.IncludeColumnNames {
-		if err := v.BeginColumn(rs); err != nil {
-			return err
-		}
-	}
-	
-	err = nil
-	
-	if vr.Len() == -1 {
-		v.Null(rs)
-	} else {
-		// more complete source of Oids: https://github.com/epgsql/epgsql/blob/master/src/epgsql_types.erl
-		
-		switch t.FormatCode {
-		case pgx.TextFormatCode:
-			s := vr.ReadString(vr.Len())
-			
-			switch t.DataTypeName {
-			case "hstore":
-				err = ParseHstore(s, rs)
-			case "json", "jsonb":
-				rs.Visitor.Json(rs, json.RawMessage(s))
-			case "numeric":
-				rs.Visitor.Numeric(rs, s)
-			default:
-				rs.Visitor.String(rs, s)
-			}
-		case pgx.BinaryFormatCode:
-			switch t.DataType {
-			case pgx.BoolOid:
-				err = rs.decodeBool(vr)
-			case pgx.ByteaOid:
-				err = rs.decodeBytea(vr)
-			case pgx.Int8Oid:
-				err = rs.decodeInt8(vr)
-			case pgx.Int2Oid:
-				err = rs.decodeInt2(vr)
-			case pgx.Int4Oid:
-				err = rs.decodeInt4(vr)
-			case pgx.TextOid, pgx.VarcharOid, pgx.UnknownOid:
-				err = rs.decodeText(vr)
-			case pgx.OidOid:
-				err = rs.decodeOid(vr)
-			case pgx.Float4Oid:
-				err = rs.decodeFloat4(vr)
-			case pgx.Float8Oid:
-				err = rs.decodeFloat8(vr)
-			case pgx.InetOid, pgx.CidrOid:
-				err = rs.decodeInet(vr)
-			case pgx.TimestampOid, pgx.TimestampTzOid:
-				err = rs.decodeTimestamp(vr)
-			case pgx.DateOid:
-				err = rs.decodeDate(vr)
-			case pgx.BoolArrayOid:
-				err = rs.decodeBoolArray(vr)
-			case pgx.Int2ArrayOid:
-				err = rs.decodeInt2Array(vr)
-			case pgx.Int4ArrayOid:
-				err = rs.decodeInt4Array(vr)
-			case pgx.Int8ArrayOid:
-				err = rs.decodeInt8Array(vr)
-			case pgx.Float4ArrayOid:
-				err = rs.decodeFloat4Array(vr)
-			case pgx.Float8ArrayOid:
-				err = rs.decodeFloat8Array(vr)
-			case pgx.TextArrayOid, pgx.VarcharArrayOid:
-				err = rs.decodeTextArray(vr)
-			case pgx.TimestampArrayOid, pgx.TimestampTzArrayOid:
-				err = rs.decodeTimestampArray(vr)
-			case 1182:
-				err = rs.decodeDateArray(vr)
-			default:
-				err = fmt.Errorf("Unknown data type for binary format: %d", t.DataType)
-			}
-		}
-	}
-	
-	if err == nil && rs.IncludeColumnNames {
-		return v.EndColumn(rs)
-	}
-	
-	return err
-}
-
-func (rs *RecordSet) decodeBool(vr *pgx.ValueReader) error {
-	if vr.Len() != 1 {
-		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a bool: %d", vr.Len()))
-	}
-
-	b := vr.ReadByte()
-	return rs.Visitor.Bool(rs, b != 0)
-}
-
-func (rs *RecordSet) decodeInt8(vr *pgx.ValueReader) error {
-	if vr.Len() != 8 {
-		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for an int8: %d", vr.Len()))
-	}
-
-	return rs.Visitor.Integer(rs, vr.ReadInt64())
-}
-
-func (rs *RecordSet) decodeInt2(vr *pgx.ValueReader) error {
-	if vr.Len() != 2 {
-		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for an int2: %d", vr.Len()))
-	}
-
-	return rs.Visitor.Integer(rs, int64(vr.ReadInt16()))
-}
-
-func (rs *RecordSet) decodeInt4(vr *pgx.ValueReader) error {
-	if vr.Len() != 4 {
-		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for an int4: %d", vr.Len()))
-	}
-
-	return rs.Visitor.Integer(rs, int64(vr.ReadInt32()))
-}
-
-func (rs *RecordSet) decodeText(vr *pgx.ValueReader) error {
-	if vr.Len() == -1 {
-		return pgx.ProtocolError("Cannot decode null into string")
-	}
-
-	return rs.Visitor.String(rs, vr.ReadString(vr.Len()))
-}
-
-func (rs *RecordSet) decodeOid(vr *pgx.ValueReader) error {
-	if vr.Len() != 4 {
-		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for an Oid: %d", vr.Len()))
-	}
-
-	return rs.Visitor.Integer(rs, int64(vr.ReadInt32()))
-}
-
-func (rs *RecordSet) decodeInet(vr *pgx.ValueReader) error {
-	if vr.Len() != 8 && vr.Len() != 20 {
-		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a %s: %d", vr.Type().Name, vr.Len()))
-	}
-
-	vr.ReadByte() // ignore family
-	bits := vr.ReadByte()
-	vr.ReadByte() // ignore is_cidr
-	addressLength := vr.ReadByte()
-
-	var ipnet net.IPNet
-	ipnet.IP = vr.ReadBytes(int32(addressLength))
-	ipnet.Mask = net.CIDRMask(int(bits), int(addressLength)*8)
-
-	return rs.Visitor.String(rs, ipnet.String())
-}
-
-func (rs *RecordSet) decodeFloat4(vr *pgx.ValueReader) error {
-	if vr.Len() != 4 {
-		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a float4: %d", vr.Len()))
-	}
-
-	i := vr.ReadInt32()
-	return rs.Visitor.Float(rs, float64(math.Float32frombits(uint32(i))))
-}
-
-func (rs *RecordSet) decodeFloat8(vr *pgx.ValueReader) error {
-	if vr.Len() != 8 {
-		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a float8: %d", vr.Len()))
-	}
-
-	i := vr.ReadInt64()
-	return rs.Visitor.Float(rs, math.Float64frombits(uint64(i)))
-}
-
-func (rs *RecordSet) decodeBytea(vr *pgx.ValueReader) error {
-	return rs.Visitor.Bytes(rs, vr.ReadBytes(vr.Len()))
-}
-
-const microsecFromUnixEpochToY2K = 946684800 * 1000000
-
-func (rs *RecordSet) decodeTimestamp(vr *pgx.ValueReader) error {
-	if vr.Len() != 8 {
-		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a timestamp: %d", vr.Len()))
-	}
-
-	microsecSinceY2K := vr.ReadInt64()
-	microsecSinceUnixEpoch := microsecFromUnixEpochToY2K + microsecSinceY2K
-	return rs.Visitor.DateTime(rs, time.Unix(microsecSinceUnixEpoch/1000000, (microsecSinceUnixEpoch%1000000)*1000))
-}
-
-func (rs *RecordSet) decodeDate(vr *pgx.ValueReader) error {
-	if vr.Len() != 4 {
-		return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a date: %d", vr.Len()))
-	}
-	dayOffset := vr.ReadInt32()
-	return rs.Visitor.Date(rs, time.Date(2000, 1, int(1+dayOffset), 0, 0, 0, 0, time.Local))
-}
-
-func (rs *RecordSet) decode1dArrayHeader(vr *pgx.ValueReader) (length int32, err error) {
-	numDims := vr.ReadInt32()
-	if numDims > 1 {
-		return 0, pgx.ProtocolError(fmt.Sprintf("Expected array to have 0 or 1 dimension, but it had %v", numDims))
-	}
-
-	vr.ReadInt32() // 0 if no nulls / 1 if there is one or more nulls -- but we don't care
-	vr.ReadInt32() // element oid
-
-	if numDims == 0 {
-		return 0, nil
-	}
-
-	length = vr.ReadInt32()
-
-	idxFirstElem := vr.ReadInt32()
-	if idxFirstElem != 1 {
-		return 0, pgx.ProtocolError(fmt.Sprintf("Expected array's first element to start a index 1, but it is %d", idxFirstElem))
-	}
-
-	return length, nil
-}
-
-func (rs *RecordSet) decodeBoolArray(vr *pgx.ValueReader) error {
-	numElems, err := rs.decode1dArrayHeader(vr)
-	if err != nil {
-		return err
-	}
-
-	if err := rs.Visitor.BeginArray(rs, int(numElems)); err != nil {
-		return err
-	}
-
-	for i := int32(0); i < numElems; i++ {
-		elSize := vr.ReadInt32()
-		switch elSize {
-		case 1:
-			if err := rs.Visitor.Bool(rs, vr.ReadByte() == 1); err != nil {
-				return err
-			}
-		case -1:
-			if err := rs.Visitor.Null(rs); err != nil {
-				return err
-			}
-		default:
-			return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a bool element: %d", elSize))
-		}
-	}
-
-	return rs.Visitor.EndArray(rs)
-}
-
-func (rs *RecordSet) decodeInt2Array(vr *pgx.ValueReader) error {
-	numElems, err := rs.decode1dArrayHeader(vr)
-	if err != nil {
-		return err
-	}
-
-	if err := rs.Visitor.BeginArray(rs, int(numElems)); err != nil {
-		return err
-	}
-
-	for i := int32(0); i < numElems; i++ {
-		elSize := vr.ReadInt32()
-		switch elSize {
-		case 2:
-			if err := rs.Visitor.Integer(rs, int64(vr.ReadInt16())); err != nil {
-				return err
-			}
-		case -1:
-			if err := rs.Visitor.Null(rs); err != nil {
-				return err
-			}
-		default:
-			return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for an int2 element: %d", elSize))
-		}
-	}
-
-	return rs.Visitor.EndArray(rs)
-}
-
-func (rs *RecordSet) decodeInt4Array(vr *pgx.ValueReader) error {
-	numElems, err := rs.decode1dArrayHeader(vr)
-	if err != nil {
-		return err
-	}
-
-	if err := rs.Visitor.BeginArray(rs, int(numElems)); err != nil {
-		return err
-	}
-
-	for i := int32(0); i < numElems; i++ {
-		elSize := vr.ReadInt32()
-		switch elSize {
-		case 4:
-			if err := rs.Visitor.Integer(rs, int64(vr.ReadInt32())); err != nil {
-				return err
-			}
-		case -1:
-			if err := rs.Visitor.Null(rs); err != nil {
-				return err
-			}
-		default:
-			return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for an int4 element: %d", elSize))
-		}
-	}
-
-	return rs.Visitor.EndArray(rs)
-}
-
-func (rs *RecordSet) decodeInt8Array(vr *pgx.ValueReader) error {
-	numElems, err := rs.decode1dArrayHeader(vr)
-	if err != nil {
-		return err
-	}
-
-	if err := rs.Visitor.BeginArray(rs, int(numElems)); err != nil {
-		return err
-	}
-
-	for i := int32(0); i < numElems; i++ {
-		elSize := vr.ReadInt32()
-		switch elSize {
-		case 8:
-			if err := rs.Visitor.Integer(rs, vr.ReadInt64()); err != nil {
-				return err
-			}
-		case -1:
-			if err := rs.Visitor.Null(rs); err != nil {
-				return err
-			}
-		default:
-			return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for an int8 element: %d", elSize))
-		}
-	}
-
-	return rs.Visitor.EndArray(rs)
-}
-
-func (rs *RecordSet) decodeFloat4Array(vr *pgx.ValueReader) error {
-	numElems, err := rs.decode1dArrayHeader(vr)
-	if err != nil {
-		return err
-	}
-
-	if err := rs.Visitor.BeginArray(rs, int(numElems)); err != nil {
-		return err
-	}
-
-	for i := int32(0); i < numElems; i++ {
-		elSize := vr.ReadInt32()
-		switch elSize {
-		case 4:
-			n := vr.ReadInt32()
-			if err := rs.Visitor.Float(rs, float64(math.Float32frombits(uint32(n)))); err != nil {
-				return err
-			}
-		case -1:
-			if err := rs.Visitor.Null(rs); err != nil {
-				return err
-			}
-		default:
-			return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a float4 element: %d", elSize))
-		}
-	}
-
-	return rs.Visitor.EndArray(rs)
-}
-
-func (rs *RecordSet) decodeFloat8Array(vr *pgx.ValueReader) error {
-	numElems, err := rs.decode1dArrayHeader(vr)
-	if err != nil {
-		return err
-	}
-
-	if err := rs.Visitor.BeginArray(rs, int(numElems)); err != nil {
-		return err
-	}
-
-	for i := int32(0); i < numElems; i++ {
-		elSize := vr.ReadInt32()
-		switch elSize {
-		case 8:
-			n := vr.ReadInt64()
-			if err := rs.Visitor.Float(rs, math.Float64frombits(uint64(n))); err != nil {
-				return err
-			}
-		case -1:
-			if err := rs.Visitor.Null(rs); err != nil {
-				return err
-			}
-		default:
-			return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a float4 element: %d", elSize))
-		}
-	}
-
-	return rs.Visitor.EndArray(rs)
-}
-
-func (rs *RecordSet) decodeTextArray(vr *pgx.ValueReader) error {
-	numElems, err := rs.decode1dArrayHeader(vr)
-	if err != nil {
-		return err
-	}
-
-	if err := rs.Visitor.BeginArray(rs, int(numElems)); err != nil {
-		return err
-	}
-
-	for i := int32(0); i < numElems; i++ {
-		elSize := vr.ReadInt32()
-		if elSize == -1 {
-			if err := rs.Visitor.Null(rs); err != nil {
-				return err
-			}
-		} else {
-			if err := rs.Visitor.String(rs, vr.ReadString(elSize)); err != nil {
-				return err
-			}
-		}
-	}
-
-	return rs.Visitor.EndArray(rs)
-}
-
-func (rs *RecordSet) decodeTimestampArray(vr *pgx.ValueReader) error {
-	numElems, err := rs.decode1dArrayHeader(vr)
-	if err != nil {
-		return err
-	}
-
-	if err := rs.Visitor.BeginArray(rs, int(numElems)); err != nil {
-		return err
-	}
-
-	for i := int32(0); i < numElems; i++ {
-		elSize := vr.ReadInt32()
-		switch elSize {
-		case 8:
-			if err := rs.decodeTimestamp(vr); err != nil {
-				return err
-			}
-		case -1:
-			if err := rs.Visitor.Null(rs); err != nil {
-				return err
-			}
-		default:
-			return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a timestamp. Timestamp element: %d", elSize))
-		}
-	}
-
-	return rs.Visitor.EndArray(rs)
-}
-
-func (rs *RecordSet) decodeDateArray(vr *pgx.ValueReader) error {
-	numElems, err := rs.decode1dArrayHeader(vr)
-	if err != nil {
-		return err
-	}
-
-	if err := rs.Visitor.BeginArray(rs, int(numElems)); err != nil {
-		return err
-	}
-
-	for i := int32(0); i < numElems; i++ {
-		elSize := vr.ReadInt32()
-		switch elSize {
-		case 4:
-			if err := rs.decodeDate(vr); err != nil {
-				return err
-			}
-		case -1:
-			if err := rs.Visitor.Null(rs); err != nil {
-				return err
-			}
-		default:
-			return pgx.ProtocolError(fmt.Sprintf("Received an invalid size for a date. Date element: %d", elSize))
-		}
-	}
-
-	return rs.Visitor.EndArray(rs)
 }

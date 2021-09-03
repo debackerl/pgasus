@@ -1,8 +1,6 @@
 package kingpin
 
-import (
-	"fmt"
-)
+import "fmt"
 
 type argGroup struct {
 	args []*ArgClause
@@ -16,23 +14,54 @@ func (a *argGroup) have() bool {
 	return len(a.args) > 0
 }
 
-// GetArg gets an argument definition.
-//
-// This allows existing arguments to be modified after definition but before parsing. Useful for
-// modular applications.
-func (a *argGroup) GetArg(name string) *ArgClause {
-	for _, arg := range a.args {
-		if arg.name == name {
-			return arg
-		}
-	}
-	return nil
-}
-
 func (a *argGroup) Arg(name, help string) *ArgClause {
 	arg := newArg(name, help)
 	a.args = append(a.args, arg)
 	return arg
+}
+
+func (a *argGroup) parse(context *ParseContext) error {
+	i := 0
+	var last *Token
+	consumed := 0
+	for i < len(a.args) {
+		arg := a.args[i]
+		token := context.Peek()
+		if token.Type == TokenEOL {
+			if consumed == 0 && arg.required {
+				return fmt.Errorf("'%s' is required", arg.name)
+			}
+			break
+		}
+
+		var err error
+		err = arg.parse(context)
+		if err != nil {
+			return err
+		}
+
+		if arg.consumesRemainder() {
+			if last == context.Peek() {
+				return fmt.Errorf("expected positional arguments <%s> but got '%s'", arg.name, last)
+			}
+			consumed++
+		} else {
+			i++
+		}
+		last = token
+	}
+
+	// Set defaults for all remaining args.
+	for i < len(a.args) {
+		arg := a.args[i]
+		if arg.defaultValue != "" {
+			if err := arg.value.Set(arg.defaultValue); err != nil {
+				return fmt.Errorf("invalid default value '%s' for argument '%s'", arg.defaultValue, arg.name)
+			}
+		}
+		i++
+	}
+	return nil
 }
 
 func (a *argGroup) init() error {
@@ -64,14 +93,12 @@ func (a *argGroup) init() error {
 }
 
 type ArgClause struct {
-	actionMixin
 	parserMixin
-	completionsMixin
-	envarMixin
-	name          string
-	help          string
-	defaultValues []string
-	required      bool
+	name         string
+	help         string
+	defaultValue string
+	required     bool
+	dispatch     Dispatch
 }
 
 func newArg(name, help string) *ArgClause {
@@ -80,38 +107,6 @@ func newArg(name, help string) *ArgClause {
 		help: help,
 	}
 	return a
-}
-
-func (a *ArgClause) setDefault() error {
-	if a.HasEnvarValue() {
-		if v, ok := a.value.(remainderArg); !ok || !v.IsCumulative() {
-			// Use the value as-is
-			return a.value.Set(a.GetEnvarValue())
-		} else {
-			for _, value := range a.GetSplitEnvarValue() {
-				if err := a.value.Set(value); err != nil {
-					return err
-				}
-			}
-			return nil
-		}
-	}
-
-	if len(a.defaultValues) > 0 {
-		for _, defaultValue := range a.defaultValues {
-			if err := a.value.Set(defaultValue); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
-	return nil
-}
-
-func (a *ArgClause) needsValue() bool {
-	haveDefault := len(a.defaultValues) > 0
-	return a.required && !(haveDefault || a.HasEnvarValue())
 }
 
 func (a *ArgClause) consumesRemainder() bool {
@@ -127,59 +122,39 @@ func (a *ArgClause) Required() *ArgClause {
 	return a
 }
 
-// Default values for this argument. They *must* be parseable by the value of the argument.
-func (a *ArgClause) Default(values ...string) *ArgClause {
-	a.defaultValues = values
+// Default value for this argument. It *must* be parseable by the value of the argument.
+func (a *ArgClause) Default(value string) *ArgClause {
+	a.defaultValue = value
 	return a
 }
 
-// Envar overrides the default value(s) for a flag from an environment variable,
-// if it is set. Several default values can be provided by using new lines to
-// separate them.
-func (a *ArgClause) Envar(name string) *ArgClause {
-	a.envar = name
-	a.noEnvar = false
-	return a
-}
-
-// NoEnvar forces environment variable defaults to be disabled for this flag.
-// Most useful in conjunction with app.DefaultEnvars().
-func (a *ArgClause) NoEnvar() *ArgClause {
-	a.envar = ""
-	a.noEnvar = true
-	return a
-}
-
-func (a *ArgClause) Action(action Action) *ArgClause {
-	a.addAction(action)
-	return a
-}
-
-func (a *ArgClause) PreAction(action Action) *ArgClause {
-	a.addPreAction(action)
-	return a
-}
-
-// HintAction registers a HintAction (function) for the arg to provide completions
-func (a *ArgClause) HintAction(action HintAction) *ArgClause {
-	a.addHintAction(action)
-	return a
-}
-
-// HintOptions registers any number of options for the flag to provide completions
-func (a *ArgClause) HintOptions(options ...string) *ArgClause {
-	a.addHintAction(func() []string {
-		return options
-	})
+func (a *ArgClause) Dispatch(dispatch Dispatch) *ArgClause {
+	a.dispatch = dispatch
 	return a
 }
 
 func (a *ArgClause) init() error {
-	if a.required && len(a.defaultValues) > 0 {
+	if a.required && a.defaultValue != "" {
 		return fmt.Errorf("required argument '%s' with unusable default value", a.name)
 	}
 	if a.value == nil {
 		return fmt.Errorf("no parser defined for arg '%s'", a.name)
+	}
+	return nil
+}
+
+func (a *ArgClause) parse(context *ParseContext) error {
+	token := context.Peek()
+	if token.Type == TokenArg {
+		if err := a.value.Set(token.Value); err != nil {
+			return err
+		}
+		if a.dispatch != nil {
+			if err := a.dispatch(context); err != nil {
+				return err
+			}
+		}
+		context.Next()
 	}
 	return nil
 }

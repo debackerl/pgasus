@@ -18,13 +18,13 @@ import (
 type JsonRecordSetWriter struct {
 	bytes.Buffer
 	MaxResponseSizeBytes int64
-	stack []StateFunction
+	stack                []StateFunction
 }
 
 func NewJsonRecordSetWriter(maxResponseSizeBytes int64) *JsonRecordSetWriter {
-	return &JsonRecordSetWriter {
+	return &JsonRecordSetWriter{
 		MaxResponseSizeBytes: maxResponseSizeBytes,
-		stack: make([]StateFunction, 0, 4),
+		stack:                make([]StateFunction, 0, 4),
 	}
 }
 
@@ -64,7 +64,7 @@ func (w *JsonRecordSetWriter) EndRecord(rs *RecordSet) error {
 
 func (w *JsonRecordSetWriter) BeginColumn(rs *RecordSet) error {
 	_, field := rs.CurrentColumn()
-	return w.String(rs, field.Name)
+	return w.String(rs, string(field.Name))
 }
 
 func (w *JsonRecordSetWriter) EndColumn(rs *RecordSet) error {
@@ -73,101 +73,101 @@ func (w *JsonRecordSetWriter) EndColumn(rs *RecordSet) error {
 
 func (w *JsonRecordSetWriter) BeginArray(rs *RecordSet, size int) error {
 	w.prepare()
-	
+
 	w.push(arrayInitState)
 	w.WriteByte('[')
-	
+
 	return w.checkSize()
 }
 
 func (w *JsonRecordSetWriter) EndArray(rs *RecordSet) error {
 	w.pop()
 	w.WriteByte(']')
-	
+
 	return w.checkSize()
 }
 
 func (w *JsonRecordSetWriter) BeginObject(rs *RecordSet) error {
 	w.prepare()
-	
+
 	w.push(objectInitState)
 	w.WriteByte('{')
-	
+
 	return w.checkSize()
 }
 
 func (w *JsonRecordSetWriter) EndObject(rs *RecordSet) error {
 	w.pop()
 	w.WriteByte('}')
-	
+
 	return w.checkSize()
 }
 
 func (w *JsonRecordSetWriter) Null(rs *RecordSet) error {
 	w.prepare()
-	
+
 	w.WriteString("null")
-	
+
 	return w.checkSize()
 }
 
 func (w *JsonRecordSetWriter) Bool(rs *RecordSet, v bool) error {
 	w.prepare()
-	
+
 	if v {
 		w.WriteString("true")
 	} else {
 		w.WriteString("false")
 	}
-	
+
 	return w.checkSize()
 }
 
 func (w *JsonRecordSetWriter) Integer(rs *RecordSet, v int64) error {
 	w.prepare()
-	
+
 	w.WriteString(strconv.FormatInt(v, 10))
-	
+
 	return w.checkSize()
 }
 
 func (w *JsonRecordSetWriter) Float(rs *RecordSet, v float64) error {
 	w.prepare()
-	
+
 	w.WriteString(strconv.FormatFloat(v, 'g', -1, 64))
-	
+
 	return w.checkSize()
 }
 
 func (w *JsonRecordSetWriter) Numeric(rs *RecordSet, v string) error {
 	w.prepare()
-	
+
 	if v == "NaN" {
 		w.WriteString(`"NaN"`)
 	} else {
 		w.WriteString(v)
 	}
-	
+
 	return w.checkSize()
 }
 
 func (w *JsonRecordSetWriter) Date(rs *RecordSet, v time.Time) error {
 	w.prepare()
-	
+
 	w.WriteByte('"')
 	w.WriteString(v.Format("2006-01-02"))
 	w.WriteByte('"')
-	
+
 	return w.checkSize()
 }
 
 func (w *JsonRecordSetWriter) DateTime(rs *RecordSet, v time.Time) error {
 	w.prepare()
-	
+
 	w.WriteByte('"')
 	w.WriteString(v.Format(time.RFC3339))
 	w.WriteByte('"')
-	
+
 	return w.checkSize()
 }
 
@@ -175,12 +175,12 @@ var hex = "0123456789abcdef"
 
 func (w *JsonRecordSetWriter) String(rs *RecordSet, v string) error {
 	w.prepare()
-	
+
 	w.WriteByte('"')
-	
+
 	start := 0
 	n := len(v)
-	
+
 	for i := 0; i < n; {
 		if b := v[i]; b < utf8.RuneSelf {
 			if 0x20 <= b && b != '\\' && b != '"' && b != '<' && b != '>' && b != '&' {
@@ -238,13 +238,13 @@ func (w *JsonRecordSetWriter) String(rs *RecordSet, v string) error {
 		w.WriteString(v[start:])
 	}
 	w.WriteByte('"')
-	
+
 	return w.checkSize()
 }
 
 func (w *JsonRecordSetWriter) Bytes(rs *RecordSet, v []byte) error {
 	w.prepare()
-	
+
 	w.WriteByte('"')
 	if len(v) < 1024 {
 		enc := base64.StdEncoding
@@ -257,15 +257,15 @@ func (w *JsonRecordSetWriter) Bytes(rs *RecordSet, v []byte) error {
 		enc.Close()
 	}
 	w.WriteByte('"')
-	
+
 	return w.checkSize()
 }
 
 func (w *JsonRecordSetWriter) Json(rs *RecordSet, v json.RawMessage) error {
 	w.prepare()
-	
+
 	w.Write(v)
-	
+
 	return w.checkSize()
 }
 

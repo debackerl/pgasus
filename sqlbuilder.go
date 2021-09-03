@@ -7,12 +7,12 @@ import (
 )
 
 type SqlBuilder struct {
-	query bytes.Buffer
+	query  bytes.Buffer
 	values []interface{}
 }
 
 func NewSqlBuilder() SqlBuilder {
-	return SqlBuilder {
+	return SqlBuilder{
 		values: make([]interface{}, 0, 4),
 	}
 }
@@ -42,6 +42,6 @@ func quoteIdentifier(name string) string {
 	if end := strings.IndexRune(name, 0); end > -1 {
 		name = name[:end]
 	}
-	
+
 	return `"` + strings.Replace(name, `"`, `""`, -1) + `"`
 }
