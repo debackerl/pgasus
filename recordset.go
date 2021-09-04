@@ -576,6 +576,47 @@ func (f *DateArrayField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
 	}
 }
 
+type BPCharField struct {
+	pgtype.BPChar
+}
+
+func (f *BPCharField) DbValue() interface{} {
+	return &f.BPChar
+}
+
+func (f *BPCharField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		visitor.String(rs, f.BPChar.String)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type BPCharArrayField struct {
+	pgtype.BPCharArray
+}
+
+func (f *BPCharArrayField) DbValue() interface{} {
+	return &f.BPCharArray
+}
+
+func (f *BPCharArrayField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		elements := f.Elements
+		visitor.BeginArray(rs, len(elements))
+		for _, element := range elements {
+			if element.Status == pgtype.Present {
+				visitor.String(rs, element.String)
+			} else {
+				visitor.Null(rs)
+			}
+		}
+		visitor.EndArray(rs)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
 type TextField struct {
 	pgtype.Text
 }
@@ -658,6 +699,63 @@ func (f *VarcharArrayField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
 	}
 }
 
+type JSONField struct {
+	pgtype.JSON
+}
+
+func (f *JSONField) DbValue() interface{} {
+	return &f.JSON
+}
+
+func (f *JSONField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		visitor.Json(rs, json.RawMessage(f.JSON.Bytes))
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type JSONBField struct {
+	pgtype.JSONB
+}
+
+func (f *JSONBField) DbValue() interface{} {
+	return &f.JSONB
+}
+
+func (f *JSONBField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		visitor.Json(rs, json.RawMessage(f.JSONB.Bytes))
+	} else {
+		visitor.Null(rs)
+	}
+}
+
+type JSONBArrayField struct {
+	pgtype.JSONBArray
+}
+
+func (f *JSONBArrayField) DbValue() interface{} {
+	return &f.JSONBArray
+}
+
+func (f *JSONBArrayField) Accept(rs *RecordSet, visitor RecordSetVisitor) {
+	if f.Status == pgtype.Present {
+		elements := f.Elements
+		visitor.BeginArray(rs, len(elements))
+		for _, element := range elements {
+			if element.Status == pgtype.Present {
+				visitor.Json(rs, json.RawMessage(element.Bytes))
+			} else {
+				visitor.Null(rs)
+			}
+		}
+		visitor.EndArray(rs)
+	} else {
+		visitor.Null(rs)
+	}
+}
+
 type FieldBuilder func() Field
 
 var fieldsByOid map[uint32]FieldBuilder
@@ -688,10 +786,15 @@ func init() {
 	fieldsByOid[pgtype.TimestamptzArrayOID] = func() Field { return &TimestamptzArrayField{} }
 	fieldsByOid[pgtype.DateOID] = func() Field { return &DateField{} }
 	fieldsByOid[pgtype.DateArrayOID] = func() Field { return &DateArrayField{} }
+	fieldsByOid[pgtype.BPCharOID] = func() Field { return &BPCharField{} }
+	fieldsByOid[pgtype.BPCharArrayOID] = func() Field { return &BPCharArrayField{} }
 	fieldsByOid[pgtype.TextOID] = func() Field { return &TextField{} }
 	fieldsByOid[pgtype.TextArrayOID] = func() Field { return &TextArrayField{} }
 	fieldsByOid[pgtype.VarcharOID] = func() Field { return &VarcharField{} }
 	fieldsByOid[pgtype.VarcharArrayOID] = func() Field { return &VarcharArrayField{} }
+	fieldsByOid[pgtype.JSONOID] = func() Field { return &JSONField{} }
+	fieldsByOid[pgtype.JSONBOID] = func() Field { return &JSONBField{} }
+	fieldsByOid[pgtype.JSONBArrayOID] = func() Field { return &JSONBArrayField{} }
 }
 
 func readRecords(dst RecordSetVisitor, singleRow bool, rows pgx.Rows) error {

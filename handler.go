@@ -858,7 +858,7 @@ func setTxContext(ctx context.Context, tx pgx.Tx, statementTimeout int, role str
 
 	// we set statement_timeout last so previous set_config can't overwrite it
 
-	if _, err := tx.Exec(ctx, "SET statement_timeout = "+strconv.Itoa(statementTimeout*1000)); err != nil {
+	if _, err := tx.Exec(ctx, "SET statement_timeout = $1", statementTimeout*1000); err != nil {
 		return err
 	}
 

@@ -199,7 +199,6 @@ func main() {
 			ServerName:            serverName,
 			RootCAs:               rootCAs,
 		}
-		tlsConfig = nil
 	}
 
 	var handler RequestHandler
