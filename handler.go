@@ -308,6 +308,7 @@ func (h *RequestHandler) makeNonBatchRouteHandler(route *Route) denco.HandlerFun
 
 			rows, err := tx.Query(ctx, sql.Sql(), sql.Values()...)
 			if err != nil {
+				log.Println("While executing:", sql.Sql())
 				panic(err)
 			}
 			defer rows.Close()
@@ -322,6 +323,7 @@ func (h *RequestHandler) makeNonBatchRouteHandler(route *Route) denco.HandlerFun
 
 			cmdTag, err := tx.Exec(ctx, sql.Sql(), sql.Values()...)
 			if err != nil {
+				log.Println("While executing:", sql.Sql())
 				panic(err)
 			}
 
@@ -410,6 +412,7 @@ func (h *RequestHandler) makeBatchRouteHandler(route *Route) denco.HandlerFunc {
 
 				cmdTag, err := tx.Exec(ctx, sql.Sql(), sql.Values()...)
 				if err != nil {
+					log.Println("While executing:", sql.Sql())
 					panic(err)
 				}
 
@@ -448,6 +451,7 @@ func processPostQuery(ctx context.Context, h *RequestHandler, route *Route, tx p
 
 	rows, err := tx.Query(ctx, sql.Sql(), sql.Values()...)
 	if err != nil {
+		log.Println("While executing:", sql.Sql())
 		panic(err)
 	}
 	defer rows.Close()
@@ -553,6 +557,7 @@ func processProcedureQuery(ctx context.Context, route *Route, tx pgx.Tx, respond
 
 	rows, err := tx.Query(ctx, sql.Sql(), sql.Values()...)
 	if err != nil {
+		log.Println("While executing:", sql.Sql())
 		panic(err)
 	}
 	defer rows.Close()
@@ -720,6 +725,7 @@ func checkDbRole(ctx context.Context, tx pgx.Tx, role string, password string) e
 	builder.WriteSql(", 'md5'), 'hex') ELSE FALSE END")
 
 	if tag, err := tx.Exec(ctx, builder.Sql(), builder.Values()...); err != nil {
+		log.Println("While executing:", builder.Sql())
 		return err
 	} else if tag.RowsAffected() == 0 {
 		return errors.New("Incorrect credentials.")
@@ -828,6 +834,7 @@ func setTxContext(ctx context.Context, tx pgx.Tx, statementTimeout int, role str
 		builder.WriteSql(quoteWith(role, '\'', true))
 
 		if _, err := tx.Exec(ctx, builder.Sql(), builder.Values()...); err != nil {
+			log.Println("While executing:", builder.Sql())
 			return err
 		}
 	}
@@ -852,13 +859,15 @@ func setTxContext(ctx context.Context, tx pgx.Tx, statementTimeout int, role str
 
 	if i > 0 {
 		if _, err := tx.Exec(ctx, builder.Sql(), builder.Values()...); err != nil {
+			log.Println("While executing:", builder.Sql())
 			return err
 		}
 	}
 
 	// we set statement_timeout last so previous set_config can't overwrite it
 
-	if _, err := tx.Exec(ctx, "SET statement_timeout = $1", statementTimeout*1000); err != nil {
+	if _, err := tx.Exec(ctx, "SET statement_timeout = "+strconv.Itoa(statementTimeout*1000)); err != nil {
+		log.Println("While setting statement_timeout:")
 		return err
 	}
 
@@ -887,6 +896,7 @@ func setCookies(ctx context.Context, w http.ResponseWriter, tx pgx.Tx, sessionPa
 
 	rows, err := tx.Query(ctx, builder.Sql(), builder.Values()...)
 	if err != nil {
+		log.Println("While executing:", builder.Sql())
 		return err
 	}
 	defer rows.Close()

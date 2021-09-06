@@ -99,7 +99,7 @@ func (s *Schema) LoadRoutes(ctx context.Context, tx pgx.Tx, searchPath string) (
 		}
 	}
 
-	rows, err := tx.Query(ctx, `SELECT route_id,method,url_path,object_name,object_type,ttl,is_public,hidden_fields,readonly_fields,context_mapped_headers,context_mapped_variables,constants,max_limit,context_mapped_cookies FROM `+quoteIdentifier(s.RoutesTableName)+`ORDER BY url_path, CASE method WHEN 'get' THEN 0 WHEN 'post' THEN 1 WHEN 'put' THEN 2 ELSE 9 END`)
+	rows, err := tx.Query(ctx, `SELECT route_id,method,url_path,object_name,object_type,ttl,is_public,hidden_fields,readonly_fields,context_mapped_headers,context_mapped_variables,constants,max_limit,context_mapped_cookies FROM `+quoteIdentifier(s.RoutesTableName)+` ORDER BY url_path, CASE method WHEN 'get' THEN 0 WHEN 'post' THEN 1 WHEN 'put' THEN 2 ELSE 9 END`)
 	if err != nil {
 		return nil, err
 	}
