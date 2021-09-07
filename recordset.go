@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -761,7 +760,7 @@ type FieldBuilder func() Field
 var fieldsByOid map[uint32]FieldBuilder
 
 func init() {
-	fieldsByOid := make(map[uint32]FieldBuilder)
+	fieldsByOid = make(map[uint32]FieldBuilder)
 	fieldsByOid[pgtype.BoolOID] = func() Field { return &BoolField{} }
 	fieldsByOid[pgtype.BoolArrayOID] = func() Field { return &BoolArrayField{} }
 	fieldsByOid[pgtype.Int2OID] = func() Field { return &Int2Field{} }
@@ -814,7 +813,7 @@ func readRecords(dst RecordSetVisitor, singleRow bool, rows pgx.Rows) error {
 		oid := rs.Columns[i].DataTypeOID
 		// our own copy of a Field is done below
 		if builder, found = fieldsByOid[oid]; !found {
-			return errors.New(fmt.Sprintf("Unknown oid: %i", oid))
+			return fmt.Errorf("Unknown oid: %#v", oid)
 		}
 
 		fields[i] = builder()
@@ -870,7 +869,7 @@ func readScalar(dst RecordSetVisitor, rows pgx.Rows) error {
 	var builder FieldBuilder
 	// our own copy of a Field is done below
 	if builder, found = fieldsByOid[oid]; !found {
-		return errors.New(fmt.Sprintf("Unknown oid: %i", oid))
+		return fmt.Errorf("Unknown oid: %#v", oid)
 	}
 
 	field := builder()
