@@ -234,7 +234,7 @@ func loadObject(ctx context.Context, tx pgx.Tx, route *Route) error {
 		var name, typ, declTyp pgtype.Text
 		var eoid pgtype.OID
 		var isoptional bool
-		if err := rows.Scan(name, &eoid, &typ, &declTyp, &isoptional); err != nil {
+		if err := rows.Scan(&name, &eoid, &typ, &declTyp, &isoptional); err != nil {
 			return err
 		}
 

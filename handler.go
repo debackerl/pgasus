@@ -241,7 +241,7 @@ func (h *RequestHandler) createHandlers() error {
 			}
 		case "procedure":
 			if r.Method == "get" && (r.Provolatile != 'i' && r.Provolatile != 's') {
-				return errors.New("Invalid provolatile value '" + string(r.Provolatile) + "' for GET route on procedure '" + r.ObjectName + "'")
+				return errors.New("Procedure '" + r.ObjectName + "' must be immutable or stable for use in GET routes.")
 			}
 			routeHandler = h.makeProcedureRouteHandler(r)
 		}
